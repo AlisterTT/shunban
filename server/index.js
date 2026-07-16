@@ -223,6 +223,46 @@ const parseTemplate = row => row && ({
   visible_departments: JSON.parse(row.visible_departments || '[]'),
   visible_users: JSON.parse(row.visible_users || '[]'),
 })
+const departmentReferences = rows => {
+  const byId = new Map(rows.map(row => [Number(row.id), row]))
+  const labels = new Map()
+  const labelFor = (id, visiting = new Set()) => {
+    if (labels.has(id)) return labels.get(id)
+    const row = byId.get(id)
+    if (!row || visiting.has(id)) return row?.name || ''
+    visiting.add(id)
+    const parentLabel = row.parent_id ? labelFor(Number(row.parent_id), visiting) : ''
+    visiting.delete(id)
+    const label = parentLabel ? `${parentLabel} / ${row.name}` : row.name
+    labels.set(id, label)
+    return label
+  }
+  byId.forEach((_row, id) => labelFor(id))
+  const byLabel = new Map([...labels].map(([id, label]) => [label, id]))
+  const nameGroups = new Map()
+  rows.forEach(row => nameGroups.set(row.name, [...(nameGroups.get(row.name) || []), Number(row.id)]))
+  const byUniqueName = new Map([...nameGroups].filter(([, ids]) => ids.length === 1).map(([name, ids]) => [name, ids[0]]))
+  return { labels, byLabel, byUniqueName }
+}
+const remapGraphDepartments = (graph, fromReferences, toReferences) => {
+  const value = typeof graph === 'string' ? JSON.parse(graph) : graph
+  return {
+    ...value,
+    nodes: (value?.nodes || []).map(node => {
+      const data = node.data || {}
+      const storedId = Number(data.departmentId)
+      const departmentId = toReferences.labels.has(storedId)
+        ? storedId
+        : fromReferences.byLabel.get(data.department) || fromReferences.byUniqueName.get(data.department)
+      if (!departmentId) return node
+      return { ...node, data: { ...data, departmentId, department:toReferences.labels.get(departmentId) } }
+    }),
+  }
+}
+const normalizeGraphDepartments = graph => {
+  const references = departmentReferences(db.prepare('SELECT * FROM departments').all())
+  return remapGraphDepartments(graph, references, references)
+}
 const canViewTemplate = (user, template) => Boolean(template) && (
   user.is_system_admin || template.owner_id === user.id || template.visibility === 'public' ||
   template.visible_users.includes(user.id) || template.visible_departments.includes(user.department_id)
@@ -274,7 +314,7 @@ app.post('/api/templates', (req, res) => {
   const result = db.prepare(`INSERT INTO templates(flow_code, name, description, category, visibility, visible_departments, visible_users, owner_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
     createFlowCode(), name, description, category, visibility, JSON.stringify(visibleDepartments), JSON.stringify(visibleUsers), req.user.id
   )
-  db.prepare('INSERT INTO template_versions(template_id, version, graph) VALUES (?, 1, ?)').run(result.lastInsertRowid, JSON.stringify(graph))
+  db.prepare('INSERT INTO template_versions(template_id, version, graph) VALUES (?, 1, ?)').run(result.lastInsertRowid, JSON.stringify(normalizeGraphDepartments(graph)))
   res.json({ id: Number(result.lastInsertRowid), version: 1 })
 })
 
@@ -287,7 +327,7 @@ app.put('/api/templates/:id', (req, res) => {
   db.prepare(`UPDATE templates SET name=?, description=?, category=?, visibility=?, visible_departments=?, visible_users=?, current_version=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`).run(
     name, description, category, visibility, JSON.stringify(visibleDepartments), JSON.stringify(visibleUsers), next, req.params.id
   )
-  db.prepare('INSERT INTO template_versions(template_id, version, graph) VALUES (?, ?, ?)').run(req.params.id, next, JSON.stringify(graph))
+  db.prepare('INSERT INTO template_versions(template_id, version, graph) VALUES (?, ?, ?)').run(req.params.id, next, JSON.stringify(normalizeGraphDepartments(graph)))
   res.json({ id: Number(req.params.id), version: next })
 })
 
@@ -370,6 +410,36 @@ app.post('/api/departments', (req, res) => {
   if (!req.body.name?.trim()) return res.status(400).json({ message: '请填写部门名称' })
   const result = db.prepare('INSERT INTO departments(name, parent_id) VALUES (?, ?)').run(req.body.name.trim(), req.body.parentId || null)
   res.json({ id: Number(result.lastInsertRowid) })
+})
+
+app.patch('/api/departments/:id', (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ message: '只有管理员可以修改部门' })
+  const name = String(req.body.name || '').trim()
+  if (!name) return res.status(400).json({ message: '请填写部门名称' })
+  const department = db.prepare('SELECT * FROM departments WHERE id=?').get(req.params.id)
+  if (!department) return res.status(404).json({ message: '部门不存在' })
+  if (department.name === name) return res.json({ ok: true })
+
+  const beforeRows = db.prepare('SELECT * FROM departments').all()
+  const beforeReferences = departmentReferences(beforeRows)
+  db.exec('BEGIN')
+  try {
+    db.prepare('UPDATE departments SET name=? WHERE id=?').run(name, department.id)
+    const afterReferences = departmentReferences(db.prepare('SELECT * FROM departments').all())
+    const updateVersion = db.prepare('UPDATE template_versions SET graph=? WHERE id=?')
+    db.prepare('SELECT id, graph FROM template_versions').all().forEach(row => {
+      updateVersion.run(JSON.stringify(remapGraphDepartments(row.graph, beforeReferences, afterReferences)), row.id)
+    })
+    const updateTask = db.prepare('UPDATE tasks SET graph_snapshot=? WHERE id=?')
+    db.prepare('SELECT id, graph_snapshot FROM tasks').all().forEach(row => {
+      updateTask.run(JSON.stringify(remapGraphDepartments(row.graph_snapshot, beforeReferences, afterReferences)), row.id)
+    })
+    db.exec('COMMIT')
+    res.json({ ok: true })
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
 })
 
 app.delete('/api/departments/:id', (req, res) => {

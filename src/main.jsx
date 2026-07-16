@@ -32,7 +32,7 @@ const api = async (url, options = {}) => {
 }
 
 const blankStep = () => ({
-  title: '新步骤', department: '', contact: '', systems: [],
+  title: '新步骤', departmentId: '', department: '', contact: '', systems: [],
   materials: '', action: '', note: '', optional: false,
 })
 
@@ -283,6 +283,7 @@ function Editor({ template, data, back, reload, notify }) {
   const selected = nodes.find(n => n.id === selectedId)
   const selectedSystems = selected ? getSystems(selected.data) : []
   const departmentChoices = departmentOptions(data.departments)
+  const selectedDepartmentId = selected ? (selected.data.departmentId || departmentChoices.find(department => department.label === selected.data.department || department.name === selected.data.department)?.id || '') : ''
   const connect = useCallback(params => setEdges(eds => addEdge({ ...params, id: `e-${Date.now()}` }, eds)), [setEdges])
   const updateSelected = (key, value) => setNodes(list => list.map(n => n.id === selectedId ? { ...n, data: { ...n.data, [key]: value } } : n))
   const addNode = () => {
@@ -343,7 +344,7 @@ function Editor({ template, data, back, reload, notify }) {
           <div className="inspector-head"><div><span className="eyebrow">步骤设置</span><h3>{selected.data.title}</h3></div></div>
           <div className="form-scroll">
             <Field label="步骤名称"><input value={selected.data.title} onChange={e => updateSelected('title', e.target.value)}/></Field>
-            <div className="field-row"><Field label="所属部门"><select value={selected.data.department || ''} onChange={e => updateSelected('department', e.target.value)}><option value="">不指定部门</option>{departmentChoices.map(department => <option key={department.id} value={department.label}>{department.label}</option>)}</select></Field><Field label="联系人"><input value={selected.data.contact} onChange={e => updateSelected('contact', e.target.value)} placeholder="例如：张三"/></Field></div>
+            <div className="field-row"><Field label="所属部门"><select value={selectedDepartmentId} onChange={e => { const department = departmentChoices.find(item => item.id === Number(e.target.value)); setNodes(list => list.map(node => node.id === selectedId ? { ...node, data:{ ...node.data, departmentId:department?.id || '', department:department?.label || '' } } : node)) }}><option value="">不指定部门</option>{departmentChoices.map(department => <option key={department.id} value={department.id}>{department.label}</option>)}</select></Field><Field label="联系人"><input value={selected.data.contact} onChange={e => updateSelected('contact', e.target.value)} placeholder="例如：张三"/></Field></div>
             <Field label="要办理的事情"><textarea value={selected.data.action} onChange={e => updateSelected('action', e.target.value)} placeholder="说清楚到这里要做什么"/></Field>
             <Field label="所需材料（仅文字记录）"><textarea value={selected.data.materials} onChange={e => updateSelected('materials', e.target.value)} placeholder="例如：合同原件两份、审批单"/></Field>
             <div className="systems-editor"><div className="systems-head"><span>使用系统</span><button type="button" onClick={() => updateSelected('systems',[...selectedSystems,{name:'',url:''}])}><Plus size={14}/>添加系统</button></div>{selectedSystems.map((system,index) => <div className="system-row" key={index}><input value={system.name} onChange={e => updateSelected('systems',selectedSystems.map((item,i)=>i===index?{...item,name:e.target.value}:item))} placeholder="系统名称"/><input value={system.url} onChange={e => updateSelected('systems',selectedSystems.map((item,i)=>i===index?{...item,url:e.target.value}:item))} placeholder="系统地址 http://"/><button type="button" aria-label={`删除第${index + 1}个系统`} onClick={() => updateSelected('systems',selectedSystems.filter((_,i)=>i!==index))}><X size={15}/></button></div>)}{!selectedSystems.length && <p>暂未指定系统，可按需要添加多个。</p>}</div>
@@ -508,20 +509,24 @@ function UsersView({ data, reload, notify }) {
 
 function DepartmentsView({ data, reload, notify }) {
   const [addingTo, setAddingTo] = useState(undefined)
+  const [editing, setEditing] = useState(null)
   const [name, setName] = useState('')
   const tree = buildDepartmentTree(data.departments)
   const submit = async e => { e.preventDefault(); try { await api('/api/departments', { method:'POST', body:JSON.stringify({ name, parentId: addingTo?.id || null }) }); setAddingTo(undefined); setName(''); await reload(); notify('部门已添加') } catch(error) { notify(error.message) } }
+  const rename = async e => { e.preventDefault(); try { await api(`/api/departments/${editing.id}`, { method:'PATCH', body:JSON.stringify({ name }) }); setEditing(null); setName(''); await reload(); notify('部门名称已更新，相关流程已同步') } catch(error) { notify(error.message) } }
   const remove = async id => { try { await api(`/api/departments/${id}`, { method:'DELETE' }); await reload(); notify('部门已删除') } catch(error) { notify(error.message) } }
+  const edit = department => { setEditing(department); setName(department.name) }
   return <section className="page enter">
     <div className="page-lead"><div><h2>组织架构</h2><p>部门可以无限分级，添加用户时可选择任意一级部门。</p></div><button className="primary" onClick={() => setAddingTo(null)}><Plus size={18}/>添加一级部门</button></div>
-    <div className="department-panel"><div className="department-head"><span>部门层级</span><span>{data.departments.length} 个部门</span></div>{tree.map(node => <DepartmentRow key={node.id} node={node} depth={0} add={setAddingTo} remove={remove} users={data.users}/>)}</div>
+    <div className="department-panel"><div className="department-head"><span>部门层级</span><span>{data.departments.length} 个部门</span></div>{tree.map(node => <DepartmentRow key={node.id} node={node} depth={0} add={setAddingTo} edit={edit} remove={remove} users={data.users}/>)}</div>
     {addingTo !== undefined && <div className="modal-wrap"><div className="scrim" onClick={() => setAddingTo(undefined)}/><form className="modal" onSubmit={submit}><div className="modal-head"><div><span className="eyebrow">部门管理</span><h2>{addingTo ? `在“${addingTo.name}”下添加` : '添加一级部门'}</h2></div><button type="button" className="icon-button" onClick={() => setAddingTo(undefined)}><X size={20}/></button></div><Field label="部门名称"><input autoFocus required value={name} onChange={e => setName(e.target.value)} placeholder="例如：项目一部"/></Field><button className="primary full">确认添加</button></form></div>}
+    {editing && <div className="modal-wrap"><div className="scrim" onClick={() => setEditing(null)}/><form className="modal" onSubmit={rename}><div className="modal-head"><div><span className="eyebrow">部门管理</span><h2>修改部门名称</h2></div><button type="button" className="icon-button" onClick={() => setEditing(null)}><X size={20}/></button></div><p className="modal-intro">修改“{editing.name}”后，流程设计和已有待办中的部门名称会同步更新。</p><Field label="新部门名称"><input autoFocus required value={name} onChange={e => setName(e.target.value)}/></Field><button className="primary full">保存新名称</button></form></div>}
   </section>
 }
 
-function DepartmentRow({ node, depth, add, remove, users }) {
+function DepartmentRow({ node, depth, add, edit, remove, users }) {
   const userCount = users.filter(user => user.department_id === node.id).length
-  return <><div className="department-row" style={{ '--depth': depth }}><span className="tree-guide"/><span className="department-icon"><Building2 size={17}/></span><div><b>{node.name}</b><small>{userCount ? `${userCount} 名用户` : '暂无用户'}</small></div><button className="ghost tiny" onClick={() => add(node)}><Plus size={14}/>添加子部门</button><button className="delete-button" aria-label={`删除${node.name}`} onClick={() => remove(node.id)}><Trash2 size={15}/></button></div>{node.children.map(child => <DepartmentRow key={child.id} node={child} depth={depth + 1} add={add} remove={remove} users={users}/>)}</>
+  return <><div className="department-row" style={{ '--depth': depth }}><span className="tree-guide"/><span className="department-icon"><Building2 size={17}/></span><div><b>{node.name}</b><small>{userCount ? `${userCount} 名用户` : '暂无用户'}</small></div><div className="department-actions"><button className="ghost tiny" aria-label={`在${node.name}下添加子部门`} onClick={() => add(node)}><Plus size={14}/><span>添加子部门</span></button><button className="edit-button" aria-label={`修改${node.name}名称`} onClick={() => edit(node)}><Pencil size={15}/></button><button className="delete-button" aria-label={`删除${node.name}`} onClick={() => remove(node.id)}><Trash2 size={15}/></button></div></div>{node.children.map(child => <DepartmentRow key={child.id} node={child} depth={depth + 1} add={add} edit={edit} remove={remove} users={users}/>)}</>
 }
 
 function SearchModal({ data, close, openTask, openTemplate }) {
@@ -564,7 +569,7 @@ function buildDepartmentTree(departments) {
 }
 function departmentOptions(departments) {
   const result = []
-  const visit = (nodes, prefix = '') => nodes.forEach(node => { result.push({ id:node.id, label:`${prefix}${node.name}` }); visit(node.children, `${prefix}${node.name} / `) })
+  const visit = (nodes, prefix = '') => nodes.forEach(node => { result.push({ id:node.id, name:node.name, label:`${prefix}${node.name}` }); visit(node.children, `${prefix}${node.name} / `) })
   visit(buildDepartmentTree(departments))
   return result
 }

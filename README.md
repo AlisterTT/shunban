@@ -126,6 +126,7 @@ npm run build
 | `PORT` | `8787` | 服务监听端口 |
 | `WORKTODO_DB_PATH` | `data/worktodo.db` | SQLite 运行库路径 |
 | `NODE_ENV` | — | 设置为 `production` 时提供构建后的网页 |
+| `VITE_COPYRIGHT_NOTICE` | `Copyright © 2026 AlisterTT · MIT License` | 构建时写入登录页和侧栏的完整版权声明 |
 
 ## 数据与安全
 

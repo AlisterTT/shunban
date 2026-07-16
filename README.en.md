@@ -126,6 +126,7 @@ npm run build
 | `PORT` | `8787` | HTTP listening port |
 | `WORKTODO_DB_PATH` | `data/worktodo.db` | Runtime SQLite database path |
 | `NODE_ENV` | — | Set to `production` to serve the built web application |
+| `VITE_COPYRIGHT_NOTICE` | `Copyright © 2026 AlisterTT · MIT License` | Full copyright notice embedded in the login page and sidebar at build time |
 
 ## Data and Security
 

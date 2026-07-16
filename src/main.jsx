@@ -15,6 +15,7 @@ import {
 import './styles.css'
 
 const getToken = () => localStorage.getItem('worktodo_token') || sessionStorage.getItem('worktodo_token')
+const copyrightNotice = import.meta.env.VITE_COPYRIGHT_NOTICE || 'Copyright © 2026 AlisterTT · MIT License'
 const saveToken = (token, remember) => {
   localStorage.removeItem('worktodo_token'); sessionStorage.removeItem('worktodo_token')
   ;(remember ? localStorage : sessionStorage).setItem('worktodo_token', token)
@@ -84,6 +85,7 @@ function LoginPage({ onLogin }) {
         {error && <p className="form-error">{error}</p>}
         <button className="primary login-submit" disabled={loading}>{loading?'正在登录…':'进入工作台'}<span>→</span></button>
       </form>
+      <Copyright className="login-copyright" />
     </section>
   </main>
 }
@@ -166,6 +168,10 @@ function Brand({ compact }) {
   return <div className={`brand ${compact ? 'compact' : ''}`}><span className="brand-mark"><GitBranch size={20} /></span><div><b>顺办</b>{!compact && <small>工作流程备忘</small>}</div></div>
 }
 
+function Copyright({ className = '' }) {
+  return <small className={`copyright ${className}`}>{copyrightNotice}</small>
+}
+
 function Sidebar({ view, navigate, mobileNav, close, notify, changePassword, user, logout }) {
   const [profileOpen, setProfileOpen] = useState(false)
   const nav = [
@@ -184,6 +190,7 @@ function Sidebar({ view, navigate, mobileNav, close, notify, changePassword, use
       {profileOpen && <div className="profile-menu"><button onClick={() => { setProfileOpen(false); changePassword() }}><KeyRound size={15}/>修改密码</button><button onClick={() => { setProfileOpen(false); notify(`${user.name} · ${user.department_name || '未设部门'}`) }}><UserRound size={15}/>查看个人资料</button><button onClick={logout}><LogOut size={15}/>退出登录</button></div>}
       <div className="profile"><span className="avatar">{user.name.slice(-1)}</span><div><b>{user.name}</b><small>{user.department_name || '未设部门'}</small></div><button className="profile-more" onClick={() => setProfileOpen(!profileOpen)} aria-label="用户菜单"><MoreHorizontal size={18}/></button></div>
     </div>
+    <Copyright className="sidebar-copyright" />
   </aside>
 }
 

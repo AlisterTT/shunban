@@ -77,7 +77,7 @@ function LoginPage({ onLogin }) {
     </section>
     <section className="login-form-side">
       <form className="login-form" onSubmit={submit}>
-        <div className="login-heading"><span className="eyebrow">内网工作台</span><h2>登录顺办</h2><p>使用管理员分配的账号继续。</p></div>
+        <div className="login-heading"><span className="eyebrow">共享工作台</span><h2>登录顺办</h2><p>使用管理员分配的账号继续。</p></div>
         <Field label="用户名"><input autoFocus required value={form.username} onChange={e => setForm({...form,username:e.target.value})} autoComplete="username"/></Field>
         <Field label="密码"><div className="password-input"><input required type={showPassword?'text':'password'} value={form.password} onChange={e => setForm({...form,password:e.target.value})} autoComplete="current-password"/><button type="button" aria-label={showPassword?'隐藏密码':'显示密码'} onClick={() => setShowPassword(!showPassword)}>{showPassword?<EyeOff size={17}/>:<Eye size={17}/>}</button></div></Field>
         <label className="remember-row"><input type="checkbox" checked={form.remember} onChange={e => setForm({...form,remember:e.target.checked})}/><i/><span><b>保持登录状态</b><small>在这台设备上保留 30 天</small></span></label>

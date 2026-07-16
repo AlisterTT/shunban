@@ -132,7 +132,7 @@ function App() {
 
   const titles = { tasks: '我的待办', library: '流程库', editor: '流程设计', task: '办理事项', users: '用户管理', departments: '部门管理' }
   return <div className="app-shell">
-    <Sidebar view={view} navigate={navigate} mobileNav={mobileNav} close={() => setMobileNav(false)} notify={notify} changePassword={() => setModal('password')} user={data.currentUser} logout={logout} />
+    <Sidebar view={view} navigate={navigate} mobileNav={mobileNav} close={() => setMobileNav(false)} notify={notify} changePassword={() => setModal('password')} user={data.currentUser} pendingTaskCount={data.tasks.filter(task => task.status !== 'done').length} logout={logout} />
     <header className="mobile-header">
       <button className="icon-button" onClick={() => setMobileNav(true)}><Menu size={21} /></button>
       <Brand compact />
@@ -172,7 +172,7 @@ function Copyright({ className = '' }) {
   return <small className={`copyright ${className}`}>{copyrightNotice}</small>
 }
 
-function Sidebar({ view, navigate, mobileNav, close, notify, changePassword, user, logout }) {
+function Sidebar({ view, navigate, mobileNav, close, notify, changePassword, user, pendingTaskCount, logout }) {
   const [profileOpen, setProfileOpen] = useState(false)
   const nav = [
     ['tasks', ListTodo, '我的待办'],
@@ -183,7 +183,7 @@ function Sidebar({ view, navigate, mobileNav, close, notify, changePassword, use
     <div className="side-head"><Brand /><button className="icon-button side-close" onClick={close}><X size={19}/></button></div>
     <nav>
       <span className="nav-label">工作区</span>
-      {nav.map(([id, Icon, label]) => <button key={id} className={view === id || (id === 'tasks' && view === 'task') || (id === 'library' && view === 'editor') ? 'active' : ''} onClick={() => navigate(id)}><Icon size={19}/><span>{label}</span>{id === 'tasks' && <em>1</em>}</button>)}
+      {nav.map(([id, Icon, label]) => <button key={id} className={view === id || (id === 'tasks' && view === 'task') || (id === 'library' && view === 'editor') ? 'active' : ''} onClick={() => navigate(id)}><Icon size={19}/><span>{label}</span>{id === 'tasks' && pendingTaskCount > 0 && <em>{pendingTaskCount}</em>}</button>)}
     </nav>
     <div className="side-tip"><Sparkles size={17}/><div><b>把经验留下来</b><p>常办事项做成流程，下次照着办。</p></div></div>
     <div className="profile-wrap">

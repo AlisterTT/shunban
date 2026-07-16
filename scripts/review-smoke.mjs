@@ -46,6 +46,20 @@ try {
   expectStatus(privateFlow, 200, '创建私有流程')
   const flowId = privateFlow.data.id
 
+  const departmentFlow = await request('/api/templates', { token:adminToken, method:'POST', body:{
+    name:'部门改名测试流程', visibility:'private', graph:{ nodes:[{ id:'dept-step', type:'step', position:{ x:0, y:0 }, data:{ title:'联系综合部', departmentId:1, department:'综合部' } }], edges:[] },
+  } })
+  expectStatus(departmentFlow, 200, '创建带部门流程')
+  const departmentTask = await request('/api/tasks', { token:adminToken, method:'POST', body:{ templateId:departmentFlow.data.id, title:'部门改名测试待办' } })
+  expectStatus(departmentTask, 200, '创建带部门待办')
+  expectStatus(await request('/api/departments/1', { token:adminToken, method:'PATCH', body:{ name:'综合管理部' } }), 200, '修改部门名称')
+  const renamedFlow = await request(`/api/templates/${departmentFlow.data.id}`, { token:adminToken })
+  expectStatus(renamedFlow, 200, '读取改名后的流程')
+  if (renamedFlow.data.graph.nodes[0].data.department !== '综合管理部' || renamedFlow.data.graph.nodes[0].data.departmentId !== 1) throw new Error('流程步骤未关联新部门名称')
+  const renamedBootstrap = await request('/api/bootstrap', { token:adminToken })
+  const renamedTask = renamedBootstrap.data.tasks.find(task => task.id === departmentTask.data.id)
+  if (renamedTask?.graph_snapshot.nodes[0].data.department !== '综合管理部') throw new Error('待办快照未同步新部门名称')
+
   const createAdmin = await request('/api/users', { token:adminToken, method:'POST', body:{ username:'smokeadmin', name:'测试管理员', password:'123456', role:'admin' } })
   expectStatus(createAdmin, 200, '系统管理员创建管理员')
   const extraAdminToken = await login('smokeadmin')

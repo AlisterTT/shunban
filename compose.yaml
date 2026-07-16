@@ -1,6 +1,9 @@
 services:
   worktodo:
-    build: .
+    build:
+      context: .
+      args:
+        VITE_COPYRIGHT_NOTICE: ${VITE_COPYRIGHT_NOTICE:-Copyright © 2026 AlisterTT · MIT License}
     container_name: worktodo
     restart: unless-stopped
     ports:

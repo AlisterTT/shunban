@@ -12,7 +12,7 @@ Shunban is a lightweight system for sharing workflow knowledge and keeping step-
 - Workflow cloning, version publishing, renaming, and deletion
 - Vertical task execution view with undo, notes, and optional dates
 - Step records for departments, contacts, materials, notes, and multiple system links
-- Nested departments, users, administrators, and protected system-administrator permissions
+- Nested departments, department renaming synchronized to workflows and tasks, users, and tiered administrator permissions
 - SQLite single-file storage with no external database service required
 - Responsive desktop and mobile layouts
 
@@ -126,6 +126,7 @@ npm run build
 | `PORT` | `8787` | HTTP listening port |
 | `WORKTODO_DB_PATH` | `data/worktodo.db` | Runtime SQLite database path |
 | `NODE_ENV` | — | Set to `production` to serve the built web application |
+| `VITE_COPYRIGHT_NOTICE` | `Copyright © 2026 AlisterTT · MIT License` | Full copyright notice embedded in the login page and sidebar at build time |
 
 ## Data and Security
 

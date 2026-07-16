@@ -132,7 +132,7 @@ function App() {
 
   const titles = { tasks: '我的待办', library: '流程库', editor: '流程设计', task: '办理事项', users: '用户管理', departments: '部门管理' }
   return <div className="app-shell">
-    <Sidebar view={view} navigate={navigate} mobileNav={mobileNav} close={() => setMobileNav(false)} notify={notify} changePassword={() => setModal('password')} user={data.currentUser} logout={logout} />
+    <Sidebar view={view} navigate={navigate} mobileNav={mobileNav} close={() => setMobileNav(false)} notify={notify} changePassword={() => setModal('password')} user={data.currentUser} pendingTaskCount={data.tasks.filter(task => task.status !== 'done').length} logout={logout} />
     <header className="mobile-header">
       <button className="icon-button" onClick={() => setMobileNav(true)}><Menu size={21} /></button>
       <Brand compact />
@@ -172,18 +172,18 @@ function Copyright({ className = '' }) {
   return <small className={`copyright ${className}`}>{copyrightNotice}</small>
 }
 
-function Sidebar({ view, navigate, mobileNav, close, notify, changePassword, user, logout }) {
+function Sidebar({ view, navigate, mobileNav, close, notify, changePassword, user, pendingTaskCount, logout }) {
   const [profileOpen, setProfileOpen] = useState(false)
   const nav = [
     ['tasks', ListTodo, '我的待办'],
     ['library', Network, '流程库'],
-    ...(user.role === 'admin' ? [['users', Users, '用户管理'], ['departments', Building2, '部门管理']] : []),
+    ...(user.is_system_admin || user.role === 'department_admin' ? [['users', Users, '用户管理'], ['departments', Building2, '部门管理']] : []),
   ]
   return <aside className={`sidebar ${mobileNav ? 'open' : ''}`}>
     <div className="side-head"><Brand /><button className="icon-button side-close" onClick={close}><X size={19}/></button></div>
     <nav>
       <span className="nav-label">工作区</span>
-      {nav.map(([id, Icon, label]) => <button key={id} className={view === id || (id === 'tasks' && view === 'task') || (id === 'library' && view === 'editor') ? 'active' : ''} onClick={() => navigate(id)}><Icon size={19}/><span>{label}</span>{id === 'tasks' && <em>1</em>}</button>)}
+      {nav.map(([id, Icon, label]) => <button key={id} className={view === id || (id === 'tasks' && view === 'task') || (id === 'library' && view === 'editor') ? 'active' : ''} onClick={() => navigate(id)}><Icon size={19}/><span>{label}</span>{id === 'tasks' && pendingTaskCount > 0 && <em>{pendingTaskCount}</em>}</button>)}
     </nav>
     <div className="side-tip"><Sparkles size={17}/><div><b>把经验留下来</b><p>常办事项做成流程，下次照着办。</p></div></div>
     <div className="profile-wrap">
@@ -480,28 +480,39 @@ function UsersView({ data, reload, notify }) {
   const [open, setOpen] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [resetTarget, setResetTarget] = useState(null)
+  const [roleTarget, setRoleTarget] = useState(null)
   const [resetResult, setResetResult] = useState(null)
   const [resetting, setResetting] = useState(false)
   const [form, setForm] = useState({ username: '', name: '', departmentId: '', role: 'user', password: '' })
-  const options = departmentOptions(data.departments)
-  const submit = async e => { e.preventDefault(); await api('/api/users', { method: 'POST', body: JSON.stringify(form) }); setOpen(false); setForm({ username: '', name: '', departmentId: '', role: 'user', password: '' }); await reload(); notify('用户已添加') }
+  const isSystemAdmin = data.currentUser.is_system_admin
+  const scopeIds = isSystemAdmin ? data.departments.map(department => department.id) : departmentDescendantIds(data.departments, data.currentUser.department_id)
+  const scopeDepartments = data.departments.filter(department => scopeIds.includes(department.id))
+  const visibleUsers = isSystemAdmin ? data.users : data.users.filter(user => scopeIds.includes(user.department_id))
+  const options = departmentOptions(scopeDepartments)
+  const openCreate = () => { setForm({ username:'', name:'', departmentId:isSystemAdmin ? '' : String(data.currentUser.department_id || ''), role:'user', password:'' }); setOpen(true) }
+  const submit = async e => { e.preventDefault(); try { await api('/api/users', { method:'POST', body:JSON.stringify(form) }); setOpen(false); await reload(); notify('用户已添加') } catch(error) { notify(error.message) } }
   const remove = async () => { try { await api(`/api/users/${deleteTarget.id}`, { method: 'DELETE' }); setDeleteTarget(null); await reload(); notify('用户已删除') } catch (error) { notify(error.message) } }
   const resetPassword = async () => { setResetting(true); try { const result = await api(`/api/users/${resetTarget.id}/reset-password`, { method:'POST' }); setResetResult({ ...resetTarget, password:result.password }) } catch (error) { notify(error.message) } finally { setResetting(false) } }
+  const changeRole = async e => { e.preventDefault(); try { await api(`/api/users/${roleTarget.id}/role`, { method:'PATCH', body:JSON.stringify({ role:roleTarget.nextRole }) }); setRoleTarget(null); await reload(); notify('用户角色已更新') } catch(error) { notify(error.message) } }
   const closeReset = () => { setResetTarget(null); setResetResult(null) }
   const copyPassword = async () => { try { await navigator.clipboard.writeText(resetResult.password); notify('新密码已复制') } catch { notify('复制失败，请手动选择密码') } }
   return <section className="page enter">
-    <div className="page-lead"><div><h2>登录用户</h2><p>管理用户名、密码和所属部门；流程联系人仍然是自由文字。</p></div><button className="primary" onClick={() => setOpen(true)}><Plus size={18}/>添加用户</button></div>
+    <div className="page-lead"><div><h2>{isSystemAdmin ? '全部登录用户' : '本部门用户'}</h2><p>{isSystemAdmin ? '管理全部账号、部门归属和角色权限。' : '管理本部门及下级部门的普通用户。'}</p></div><button className="primary" onClick={openCreate} disabled={!isSystemAdmin && !data.currentUser.department_id}><Plus size={18}/>添加用户</button></div>
+    {!isSystemAdmin && !data.currentUser.department_id && <div className="permission-note">当前部门管理员尚未分配所属部门，请联系系统管理员设置后再管理用户。</div>}
     <div className="user-table">
       <div className="table-head"><span>用户</span><span>用户名</span><span>部门</span><span>角色</span><span/></div>
-      {data.users.map(u => {
+      {visibleUsers.map(u => {
         const isCurrent = u.id === data.currentUser.id
-        const isSystemAdmin = Boolean(u.is_system_admin)
-        const canReset = !isCurrent && (data.currentUser.is_system_admin || u.role === 'user')
-        const canDelete = !isCurrent && !isSystemAdmin && (data.currentUser.is_system_admin || u.role !== 'admin')
-        return <div className="table-row" key={u.id}><span className="user-cell"><i>{u.name.slice(-1)}</i><b>{u.name}</b></span><span>{u.username}</span><span>{u.department_name || '—'}</span><span>{isSystemAdmin ? '系统管理员' : u.role === 'admin' ? '管理员' : '普通用户'}</span><span className="user-actions">{isCurrent && <small className="current-user">当前登录</small>}{!isCurrent && isSystemAdmin && <small className="protected-user">不可删除</small>}{canReset && <button className="reset-button" aria-label={`重置${u.name}的密码`} onClick={() => { setResetTarget(u); setResetResult(null) }}><KeyRound size={15}/></button>}{canDelete && <button className="delete-button" aria-label={`删除${u.name}`} onClick={() => setDeleteTarget(u)}><Trash2 size={16}/></button>}</span></div>
+        const targetIsSystemAdmin = Boolean(u.is_system_admin)
+        const canManageTarget = isSystemAdmin || u.role === 'user'
+        const canReset = !isCurrent && canManageTarget
+        const canDelete = !isCurrent && !targetIsSystemAdmin && canManageTarget
+        const canChangeRole = isSystemAdmin && !targetIsSystemAdmin
+        return <div className="table-row" key={u.id}><span className="user-cell"><i>{u.name.slice(-1)}</i><b>{u.name}</b></span><span>{u.username}</span><span>{u.department_name || '—'}</span><span>{targetIsSystemAdmin ? '系统管理员' : u.role === 'department_admin' ? '部门管理员' : '普通用户'}</span><span className="user-actions">{isCurrent && <small className="current-user">当前登录</small>}{!isCurrent && targetIsSystemAdmin && <small className="protected-user">不可修改</small>}{canChangeRole && <button className="edit-button" aria-label={`修改${u.name}的角色`} onClick={() => setRoleTarget({ ...u, nextRole:u.role === 'department_admin' ? 'user' : 'department_admin' })}><Settings size={15}/></button>}{canReset && <button className="reset-button" aria-label={`重置${u.name}的密码`} onClick={() => { setResetTarget(u); setResetResult(null) }}><KeyRound size={15}/></button>}{canDelete && <button className="delete-button" aria-label={`删除${u.name}`} onClick={() => setDeleteTarget(u)}><Trash2 size={16}/></button>}</span></div>
       })}
     </div>
-    {open && <div className="modal-wrap"><div className="scrim" onClick={() => setOpen(false)}/><form className="modal" onSubmit={submit}><div className="modal-head"><div><span className="eyebrow">用户管理</span><h2>添加登录用户</h2></div><button type="button" className="icon-button" onClick={() => setOpen(false)}><X size={20}/></button></div><Field label="姓名"><input required value={form.name} onChange={e => setForm({...form, name:e.target.value})}/></Field><Field label="用户名"><input required value={form.username} onChange={e => setForm({...form, username:e.target.value})}/></Field><Field label="初始密码"><input required minLength="6" type="password" value={form.password} onChange={e => setForm({...form, password:e.target.value})} placeholder="至少 6 位"/></Field><Field label="所属部门"><select value={form.departmentId} onChange={e => setForm({...form, departmentId:e.target.value})}><option value="">请选择</option>{options.map(d => <option value={d.id} key={d.id}>{d.label}</option>)}</select></Field><Field label="角色"><select value={form.role} onChange={e => setForm({...form, role:e.target.value})}><option value="user">普通用户</option>{data.currentUser.is_system_admin && <option value="admin">管理员</option>}</select></Field><button className="primary full">确认添加</button></form></div>}
+    {open && <div className="modal-wrap"><div className="scrim" onClick={() => setOpen(false)}/><form className="modal" onSubmit={submit}><div className="modal-head"><div><span className="eyebrow">用户管理</span><h2>添加登录用户</h2></div><button type="button" className="icon-button" onClick={() => setOpen(false)}><X size={20}/></button></div><Field label="姓名"><input required value={form.name} onChange={e => setForm({...form, name:e.target.value})}/></Field><Field label="用户名"><input required value={form.username} onChange={e => setForm({...form, username:e.target.value})}/></Field><Field label="初始密码"><input required minLength="6" type="password" value={form.password} onChange={e => setForm({...form, password:e.target.value})} placeholder="至少 6 位"/></Field><Field label="所属部门"><select required value={form.departmentId} onChange={e => setForm({...form, departmentId:e.target.value})}><option value="">请选择</option>{options.map(d => <option value={d.id} key={d.id}>{d.label}</option>)}</select></Field>{isSystemAdmin && <Field label="角色"><select value={form.role} onChange={e => setForm({...form, role:e.target.value})}><option value="user">普通用户</option><option value="department_admin">部门管理员</option></select></Field>}<button className="primary full">确认添加</button></form></div>}
+    {roleTarget && <div className="modal-wrap"><div className="scrim" onClick={() => setRoleTarget(null)}/><form className="modal" onSubmit={changeRole}><div className="modal-head"><div><span className="eyebrow">角色权限</span><h2>修改“{roleTarget.name}”的角色</h2></div><button type="button" className="icon-button" onClick={() => setRoleTarget(null)}><X size={20}/></button></div><Field label="用户角色"><select value={roleTarget.nextRole} onChange={e => setRoleTarget({...roleTarget, nextRole:e.target.value})}><option value="user">普通用户</option><option value="department_admin">部门管理员</option></select></Field><p className="modal-intro">部门管理员可以管理所属部门及下级部门的组织结构和普通用户。保存后该用户需要重新登录。</p><button className="primary full">保存角色权限</button></form></div>}
     {deleteTarget && <div className="modal-wrap"><div className="scrim" onClick={() => setDeleteTarget(null)}/><div className="modal confirm-modal danger-confirm"><div className="confirm-icon"><Trash2 size={23}/></div><div className="modal-head"><div><span className="eyebrow">删除用户</span><h2>确定删除“{deleteTarget.name}”？</h2></div><button className="icon-button" onClick={() => setDeleteTarget(null)}><X size={20}/></button></div><p className="modal-intro">该用户将无法继续登录。此操作不会删除其他用户。</p><div className="modal-actions"><button className="ghost" onClick={() => setDeleteTarget(null)}>取消</button><button className="danger-button" onClick={remove}>确认删除用户</button></div></div></div>}
     {resetTarget && <div className="modal-wrap"><div className="scrim" onClick={closeReset}/><div className="modal confirm-modal reset-password-modal"><div className="confirm-icon"><KeyRound size={23}/></div><div className="modal-head"><div><span className="eyebrow">随机重置密码</span><h2>{resetResult ? '新密码已生成' : `重置“${resetTarget.name}”的密码？`}</h2></div><button className="icon-button" onClick={closeReset}><X size={20}/></button></div>{resetResult ? <><p className="modal-intro">旧密码和该账号原有登录已失效，请将下面的新密码交给本人。</p><div className="reset-password-value"><code>{resetResult.password}</code><button onClick={copyPassword}><Copy size={15}/>复制密码</button></div><button className="primary full" onClick={closeReset}>完成</button></> : <><p className="modal-intro">系统会生成一个随机密码，并立即让该账号的旧密码及已有登录失效。</p><div className="modal-actions"><button className="ghost" onClick={closeReset}>取消</button><button className="primary" onClick={resetPassword} disabled={resetting}>{resetting ? '正在重置…' : '确认随机重置'}</button></div></>}</div></div>}
   </section>
@@ -511,22 +522,28 @@ function DepartmentsView({ data, reload, notify }) {
   const [addingTo, setAddingTo] = useState(undefined)
   const [editing, setEditing] = useState(null)
   const [name, setName] = useState('')
-  const tree = buildDepartmentTree(data.departments)
+  const isSystemAdmin = data.currentUser.is_system_admin
+  const scopeIds = isSystemAdmin ? data.departments.map(department => department.id) : departmentDescendantIds(data.departments, data.currentUser.department_id)
+  const scopeDepartments = data.departments.filter(department => scopeIds.includes(department.id))
+  const tree = buildDepartmentTree(scopeDepartments)
+  const rootDepartment = data.departments.find(department => department.id === data.currentUser.department_id)
   const submit = async e => { e.preventDefault(); try { await api('/api/departments', { method:'POST', body:JSON.stringify({ name, parentId: addingTo?.id || null }) }); setAddingTo(undefined); setName(''); await reload(); notify('部门已添加') } catch(error) { notify(error.message) } }
   const rename = async e => { e.preventDefault(); try { await api(`/api/departments/${editing.id}`, { method:'PATCH', body:JSON.stringify({ name }) }); setEditing(null); setName(''); await reload(); notify('部门名称已更新，相关流程已同步') } catch(error) { notify(error.message) } }
   const remove = async id => { try { await api(`/api/departments/${id}`, { method:'DELETE' }); await reload(); notify('部门已删除') } catch(error) { notify(error.message) } }
   const edit = department => { setEditing(department); setName(department.name) }
   return <section className="page enter">
-    <div className="page-lead"><div><h2>组织架构</h2><p>部门可以无限分级，添加用户时可选择任意一级部门。</p></div><button className="primary" onClick={() => setAddingTo(null)}><Plus size={18}/>添加一级部门</button></div>
-    <div className="department-panel"><div className="department-head"><span>部门层级</span><span>{data.departments.length} 个部门</span></div>{tree.map(node => <DepartmentRow key={node.id} node={node} depth={0} add={setAddingTo} edit={edit} remove={remove} users={data.users}/>)}</div>
+    <div className="page-lead"><div><h2>{isSystemAdmin ? '组织架构' : `${rootDepartment?.name || '本部门'}组织架构`}</h2><p>{isSystemAdmin ? '管理全部部门及多级组织关系。' : '可以管理本部门下的子部门，根部门由系统管理员维护。'}</p></div>{isSystemAdmin ? <button className="primary" onClick={() => setAddingTo(null)}><Plus size={18}/>添加一级部门</button> : rootDepartment && <button className="primary" onClick={() => setAddingTo(rootDepartment)}><Plus size={18}/>添加子部门</button>}</div>
+    {!isSystemAdmin && !rootDepartment && <div className="permission-note">当前部门管理员尚未分配所属部门，请联系系统管理员设置后再管理组织架构。</div>}
+    {!!tree.length && <div className="department-panel"><div className="department-head"><span>部门层级</span><span>{scopeDepartments.length} 个部门</span></div>{tree.map(node => <DepartmentRow key={node.id} node={node} depth={0} rootId={isSystemAdmin ? null : data.currentUser.department_id} add={setAddingTo} edit={edit} remove={remove} users={data.users}/>)}</div>}
     {addingTo !== undefined && <div className="modal-wrap"><div className="scrim" onClick={() => setAddingTo(undefined)}/><form className="modal" onSubmit={submit}><div className="modal-head"><div><span className="eyebrow">部门管理</span><h2>{addingTo ? `在“${addingTo.name}”下添加` : '添加一级部门'}</h2></div><button type="button" className="icon-button" onClick={() => setAddingTo(undefined)}><X size={20}/></button></div><Field label="部门名称"><input autoFocus required value={name} onChange={e => setName(e.target.value)} placeholder="例如：项目一部"/></Field><button className="primary full">确认添加</button></form></div>}
     {editing && <div className="modal-wrap"><div className="scrim" onClick={() => setEditing(null)}/><form className="modal" onSubmit={rename}><div className="modal-head"><div><span className="eyebrow">部门管理</span><h2>修改部门名称</h2></div><button type="button" className="icon-button" onClick={() => setEditing(null)}><X size={20}/></button></div><p className="modal-intro">修改“{editing.name}”后，流程设计和已有待办中的部门名称会同步更新。</p><Field label="新部门名称"><input autoFocus required value={name} onChange={e => setName(e.target.value)}/></Field><button className="primary full">保存新名称</button></form></div>}
   </section>
 }
 
-function DepartmentRow({ node, depth, add, edit, remove, users }) {
+function DepartmentRow({ node, depth, rootId, add, edit, remove, users }) {
   const userCount = users.filter(user => user.department_id === node.id).length
-  return <><div className="department-row" style={{ '--depth': depth }}><span className="tree-guide"/><span className="department-icon"><Building2 size={17}/></span><div><b>{node.name}</b><small>{userCount ? `${userCount} 名用户` : '暂无用户'}</small></div><div className="department-actions"><button className="ghost tiny" aria-label={`在${node.name}下添加子部门`} onClick={() => add(node)}><Plus size={14}/><span>添加子部门</span></button><button className="edit-button" aria-label={`修改${node.name}名称`} onClick={() => edit(node)}><Pencil size={15}/></button><button className="delete-button" aria-label={`删除${node.name}`} onClick={() => remove(node.id)}><Trash2 size={15}/></button></div></div>{node.children.map(child => <DepartmentRow key={child.id} node={child} depth={depth + 1} add={add} edit={edit} remove={remove} users={users}/>)}</>
+  const isManagedRoot = Number(node.id) === Number(rootId)
+  return <><div className="department-row" style={{ '--depth': depth }}><span className="tree-guide"/><span className="department-icon"><Building2 size={17}/></span><div><b>{node.name}</b><small>{isManagedRoot ? '当前管理范围' : userCount ? `${userCount} 名用户` : '暂无用户'}</small></div><div className="department-actions"><button className="ghost tiny" aria-label={`在${node.name}下添加子部门`} onClick={() => add(node)}><Plus size={14}/><span>添加子部门</span></button>{!isManagedRoot && <button className="edit-button" aria-label={`修改${node.name}名称`} onClick={() => edit(node)}><Pencil size={15}/></button>}{!isManagedRoot && <button className="delete-button" aria-label={`删除${node.name}`} onClick={() => remove(node.id)}><Trash2 size={15}/></button>}</div></div>{node.children.map(child => <DepartmentRow key={child.id} node={child} depth={depth + 1} rootId={rootId} add={add} edit={edit} remove={remove} users={users}/>)}</>
 }
 
 function SearchModal({ data, close, openTask, openTemplate }) {
@@ -571,6 +588,15 @@ function departmentOptions(departments) {
   const result = []
   const visit = (nodes, prefix = '') => nodes.forEach(node => { result.push({ id:node.id, name:node.name, label:`${prefix}${node.name}` }); visit(node.children, `${prefix}${node.name} / `) })
   visit(buildDepartmentTree(departments))
+  return result
+}
+function departmentDescendantIds(departments, rootId) {
+  if (!rootId) return []
+  const children = new Map()
+  departments.forEach(department => children.set(department.parent_id, [...(children.get(department.parent_id) || []), department.id]))
+  const result = []
+  const visit = id => { if (result.includes(id)) return; result.push(id); (children.get(id) || []).forEach(visit) }
+  visit(Number(rootId))
   return result
 }
 function buildFlowStages(nodes, edges) {

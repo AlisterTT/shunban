@@ -2,7 +2,7 @@
 
 English | [简体中文](./README.md)
 
-Shunban is a lightweight personal workflow and task reminder system designed for internal networks. It turns cross-department and cross-system procedures into reusable workflow templates. Calling a workflow creates an independent task snapshot that can be completed step by step.
+Shunban is a lightweight system for sharing workflow knowledge and keeping step-by-step task notes. It turns cross-department and cross-system procedures into reusable workflow templates. Calling a workflow creates an independent task snapshot that can be completed step by step. It can be deployed on either a private network or the public internet with appropriate security controls.
 
 ## Features
 
@@ -131,6 +131,6 @@ npm run build
 
 - `data/worktodo.db`, WAL files, and `data/backups/` are ignored by Git.
 - Keep real names, workflows, and passwords out of `data/demo.db`.
-- Use HTTPS behind a reverse proxy and restrict network access when serving beyond a trusted LAN.
+- For public-internet deployments, use HTTPS behind a reverse proxy, restrict administrative access, and apply appropriate network controls.
 - Back up the database regularly and change the default administrator password after deployment.
 - This project is released under the [MIT License](./LICENSE). You may use, modify, and distribute it; the software is provided as is.

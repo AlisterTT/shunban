@@ -12,7 +12,7 @@ Shunban is a lightweight system for sharing workflow knowledge and keeping step-
 - Workflow cloning, version publishing, renaming, and deletion
 - Vertical task execution view with undo, notes, and optional dates
 - Step records for departments, contacts, materials, notes, and multiple system links
-- Nested departments, department renaming synchronized to workflows and tasks, users, and tiered administrator permissions
+- Nested departments, department renaming synchronized to workflows and tasks, and tiered system/department administrator permissions
 - SQLite single-file storage with no external database service required
 - Responsive desktop and mobile layouts
 
@@ -34,6 +34,12 @@ Open <http://localhost:8787>. The demo database uses username `admin` and passwo
 ```bash
 npm run deploy
 ```
+
+## Roles and Permissions
+
+- System administrator `admin`: manages all users and departments and can switch non-system accounts between regular user and department administrator roles.
+- Department administrator: manages its department subtree, including child-department maintenance and regular-user creation, deletion, and password resets. It cannot modify its own root department or manage other branches or administrators.
+- Regular user: uses personal tasks and workflows shared within the configured visibility scope.
 
 ## Docker Deployment (Recommended)
 

@@ -87,6 +87,7 @@ if (!userColumns.includes('password_hash')) db.exec('ALTER TABLE users ADD COLUM
 if (!userColumns.includes('is_system_admin')) db.exec('ALTER TABLE users ADD COLUMN is_system_admin INTEGER NOT NULL DEFAULT 0')
 db.prepare("UPDATE users SET is_system_admin=CASE WHEN username='admin' THEN 1 ELSE 0 END").run()
 db.prepare("UPDATE users SET department_id=NULL WHERE username='admin'").run()
+db.prepare("UPDATE users SET role='department_admin' WHERE is_system_admin=0 AND role='admin'").run()
 const taskColumns = db.prepare('PRAGMA table_info(tasks)').all().map(column => column.name)
 if (!taskColumns.includes('times')) db.exec(`ALTER TABLE tasks ADD COLUMN times TEXT NOT NULL DEFAULT '{}'`)
 const templateColumns = db.prepare('PRAGMA table_info(templates)').all().map(column => column.name)
@@ -172,6 +173,14 @@ const loginAttempts = new Map()
 app.get('/api/health', (_req, res) => res.json({ ok: true }))
 
 const publicUser = row => row && ({ id: row.id, username: row.username, name: row.name, role: row.role, is_system_admin: Boolean(row.is_system_admin), department_id: row.department_id, department_name: row.department_name })
+const isDepartmentAdmin = user => user?.role === 'department_admin' && !user.is_system_admin
+const canManageUsers = user => Boolean(user?.is_system_admin || isDepartmentAdmin(user))
+const departmentScopeIds = rootId => rootId ? db.prepare(`WITH RECURSIVE scope(id) AS (
+  SELECT id FROM departments WHERE id=?
+  UNION ALL
+  SELECT d.id FROM departments d JOIN scope s ON d.parent_id=s.id
+) SELECT id FROM scope`).all(rootId).map(row => Number(row.id)) : []
+const inDepartmentScope = (user, departmentId) => user.is_system_admin || departmentScopeIds(user.department_id).includes(Number(departmentId))
 const sessionUser = req => {
   const token = req.headers.authorization?.replace(/^Bearer\s+/i, '')
   if (!token) return null
@@ -283,7 +292,7 @@ app.get('/api/bootstrap', (_req, res) => {
     templates,
     tasks,
     departments: db.prepare('SELECT * FROM departments ORDER BY id').all(),
-    users: db.prepare(`SELECT u.*, d.name department_name FROM users u LEFT JOIN departments d ON d.id=u.department_id ORDER BY u.id`).all(),
+    users: db.prepare(`SELECT u.id, u.username, u.name, u.department_id, u.role, u.is_system_admin, d.name department_name FROM users u LEFT JOIN departments d ON d.id=u.department_id ORDER BY u.id`).all(),
   })
 })
 
@@ -374,50 +383,73 @@ app.delete('/api/tasks/:id', (req, res) => {
 })
 
 app.post('/api/users', (req, res) => {
-  if (req.user.role !== 'admin') return res.status(403).json({ message: '只有管理员可以添加用户' })
-  if (req.body.role === 'admin' && !req.user.is_system_admin) return res.status(403).json({ message: '只有系统管理员可以添加管理员' })
+  if (!canManageUsers(req.user)) return res.status(403).json({ message: '没有用户管理权限' })
   if (!req.body.username?.trim() || !req.body.name?.trim()) return res.status(400).json({ message: '请填写用户名和姓名' })
   if (!req.body.password || String(req.body.password).length < 6) return res.status(400).json({ message: '初始密码至少需要 6 位' })
-  const result = db.prepare('INSERT INTO users(username, name, department_id, role, password_hash) VALUES (?, ?, ?, ?, ?)').run(req.body.username, req.body.name, req.body.departmentId || null, req.body.role || 'user', hashPassword(req.body.password || '123456'))
+  const departmentId = Number(req.body.departmentId) || (req.user.is_system_admin ? null : req.user.department_id)
+  if (!req.user.is_system_admin && !departmentId) return res.status(400).json({ message: '部门管理员尚未分配部门，不能添加用户' })
+  if (!req.user.is_system_admin && !inDepartmentScope(req.user, departmentId)) return res.status(403).json({ message: '只能向本部门及下级部门添加用户' })
+  const requestedRole = req.body.role === 'admin' ? 'department_admin' : (req.body.role || 'user')
+  if (!req.user.is_system_admin && requestedRole !== 'user') return res.status(403).json({ message: '只有系统管理员可以创建部门管理员' })
+  const role = req.user.is_system_admin && requestedRole === 'department_admin' ? 'department_admin' : 'user'
+  if (role === 'department_admin' && !departmentId) return res.status(400).json({ message: '部门管理员必须先分配所属部门' })
+  if (departmentId && !db.prepare('SELECT id FROM departments WHERE id=?').get(departmentId)) return res.status(400).json({ message: '所属部门不存在' })
+  const result = db.prepare('INSERT INTO users(username, name, department_id, role, password_hash) VALUES (?, ?, ?, ?, ?)').run(req.body.username.trim(), req.body.name.trim(), departmentId, role, hashPassword(req.body.password))
   res.json({ id: Number(result.lastInsertRowid) })
 })
 
 app.delete('/api/users/:id', (req, res) => {
-  if (req.user.role !== 'admin') return res.status(403).json({ message: '只有管理员可以删除用户' })
+  if (!canManageUsers(req.user)) return res.status(403).json({ message: '没有用户管理权限' })
   const target = db.prepare('SELECT * FROM users WHERE id=?').get(req.params.id)
   if (!target) return res.status(404).json({ message: '用户不存在' })
   if (target.is_system_admin) return res.status(400).json({ message: '系统管理员 admin 不能删除' })
   if (target.id === req.user.id) return res.status(400).json({ message: '当前登录账号不能删除自己' })
-  if (target.role === 'admin' && !req.user.is_system_admin) return res.status(403).json({ message: '普通管理员不能删除其他管理员' })
+  if (!req.user.is_system_admin && (!inDepartmentScope(req.user, target.department_id) || target.role !== 'user')) return res.status(403).json({ message: '部门管理员只能删除本部门及下级部门的普通用户' })
   db.prepare('DELETE FROM users WHERE id=?').run(req.params.id)
   res.json({ ok: true })
 })
 
 app.post('/api/users/:id/reset-password', (req, res) => {
-  if (req.user.role !== 'admin') return res.status(403).json({ message: '只有管理员可以重置用户密码' })
+  if (!canManageUsers(req.user)) return res.status(403).json({ message: '没有用户管理权限' })
   const target = db.prepare('SELECT * FROM users WHERE id=?').get(req.params.id)
   if (!target) return res.status(404).json({ message: '用户不存在' })
   if (target.id === req.user.id) return res.status(400).json({ message: '当前账号请使用“修改密码”；admin 忘记密码需从数据库恢复' })
-  if (!req.user.is_system_admin && target.role === 'admin') return res.status(403).json({ message: '普通管理员只能重置普通用户的密码' })
+  if (!req.user.is_system_admin && (!inDepartmentScope(req.user, target.department_id) || target.role !== 'user')) return res.status(403).json({ message: '部门管理员只能重置本部门及下级部门普通用户的密码' })
   const password = generatePassword()
   db.prepare('UPDATE users SET password_hash=? WHERE id=?').run(hashPassword(password), target.id)
   db.prepare('DELETE FROM sessions WHERE user_id=?').run(target.id)
   res.json({ password })
 })
 
+app.patch('/api/users/:id/role', (req, res) => {
+  if (!req.user.is_system_admin) return res.status(403).json({ message: '只有系统管理员可以修改角色' })
+  const target = db.prepare('SELECT * FROM users WHERE id=?').get(req.params.id)
+  if (!target) return res.status(404).json({ message: '用户不存在' })
+  if (target.is_system_admin) return res.status(400).json({ message: '系统管理员角色不能修改' })
+  const role = req.body.role === 'department_admin' ? 'department_admin' : req.body.role === 'user' ? 'user' : null
+  if (!role) return res.status(400).json({ message: '角色类型不正确' })
+  if (role === 'department_admin' && !target.department_id) return res.status(400).json({ message: '请先为该用户分配部门，再设为部门管理员' })
+  db.prepare('UPDATE users SET role=? WHERE id=?').run(role, target.id)
+  db.prepare('DELETE FROM sessions WHERE user_id=?').run(target.id)
+  res.json({ ok: true })
+})
+
 app.post('/api/departments', (req, res) => {
-  if (req.user.role !== 'admin') return res.status(403).json({ message: '只有管理员可以添加部门' })
+  if (!req.user.is_system_admin && !isDepartmentAdmin(req.user)) return res.status(403).json({ message: '没有部门管理权限' })
   if (!req.body.name?.trim()) return res.status(400).json({ message: '请填写部门名称' })
-  const result = db.prepare('INSERT INTO departments(name, parent_id) VALUES (?, ?)').run(req.body.name.trim(), req.body.parentId || null)
+  const parentId = Number(req.body.parentId) || null
+  if (!req.user.is_system_admin && (!parentId || !inDepartmentScope(req.user, parentId))) return res.status(403).json({ message: '只能在本部门及下级部门中添加子部门' })
+  const result = db.prepare('INSERT INTO departments(name, parent_id) VALUES (?, ?)').run(req.body.name.trim(), parentId)
   res.json({ id: Number(result.lastInsertRowid) })
 })
 
 app.patch('/api/departments/:id', (req, res) => {
-  if (req.user.role !== 'admin') return res.status(403).json({ message: '只有管理员可以修改部门' })
+  if (!req.user.is_system_admin && !isDepartmentAdmin(req.user)) return res.status(403).json({ message: '没有部门管理权限' })
   const name = String(req.body.name || '').trim()
   if (!name) return res.status(400).json({ message: '请填写部门名称' })
   const department = db.prepare('SELECT * FROM departments WHERE id=?').get(req.params.id)
   if (!department) return res.status(404).json({ message: '部门不存在' })
+  if (!req.user.is_system_admin && (Number(department.id) === Number(req.user.department_id) || !inDepartmentScope(req.user, department.id))) return res.status(403).json({ message: '部门管理员只能修改本部门的下级部门' })
   if (department.name === name) return res.json({ ok: true })
 
   const beforeRows = db.prepare('SELECT * FROM departments').all()
@@ -443,7 +475,10 @@ app.patch('/api/departments/:id', (req, res) => {
 })
 
 app.delete('/api/departments/:id', (req, res) => {
-  if (req.user.role !== 'admin') return res.status(403).json({ message: '只有管理员可以删除部门' })
+  if (!req.user.is_system_admin && !isDepartmentAdmin(req.user)) return res.status(403).json({ message: '没有部门管理权限' })
+  const department = db.prepare('SELECT * FROM departments WHERE id=?').get(req.params.id)
+  if (!department) return res.status(404).json({ message: '部门不存在' })
+  if (!req.user.is_system_admin && (Number(department.id) === Number(req.user.department_id) || !inDepartmentScope(req.user, department.id))) return res.status(403).json({ message: '部门管理员只能删除本部门的下级部门' })
   const children = db.prepare('SELECT COUNT(*) total FROM departments WHERE parent_id=?').get(req.params.id).total
   const users = db.prepare('SELECT COUNT(*) total FROM users WHERE department_id=?').get(req.params.id).total
   if (children) return res.status(400).json({ message: '请先删除该部门下的子部门' })

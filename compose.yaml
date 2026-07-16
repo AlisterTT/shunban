@@ -1,0 +1,12 @@
+services:
+  worktodo:
+    build: .
+    container_name: worktodo
+    restart: unless-stopped
+    ports:
+      - "8787:8787"
+    volumes:
+      - worktodo_data:/app/data
+
+volumes:
+  worktodo_data:

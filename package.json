@@ -1,7 +1,7 @@
 {
   "name": "shunban",
   "version": "0.1.0",
-  "description": "顺办：面向内网的个人工作流程备忘系统",
+  "description": "顺办：共享工作流程备忘系统",
   "private": true,
   "license": "MIT",
   "repository": "https://github.com/AlisterTT/shunban",

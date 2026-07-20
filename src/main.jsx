@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import {
   ReactFlow, Background, Controls, MiniMap, Handle, Position,
@@ -43,6 +43,7 @@ function StepNode({ data, selected }) {
   const systems = getSystems(data)
   return <div className={`flow-node ${selected ? 'selected' : ''} ${data.status || ''}`}>
     <Handle type="target" position={Position.Left} />
+    {selected && <span className="node-selected-badge">已选中</span>}
     <div className="flow-node-top">
       <span className="step-dot">{data.status === 'done' ? <Check size={13} /> : ''}</span>
       <span className="flow-node-kicker">{data.department || '未设部门'}</span>
@@ -151,7 +152,7 @@ function App() {
       </div>
       {view === 'tasks' && <TasksView data={data} openTask={openTask} newTask={() => setModal('newTask')} />}
       {view === 'library' && <LibraryView data={data} openTemplate={openTemplate} newTemplate={newTemplate} startTask={id => setModal({ type: 'newTask', templateId: id })} reload={reload} notify={notify} />}
-      {view === 'editor' && editingTemplate && <Editor template={editingTemplate} data={data} back={() => navigate('library')} reload={reload} notify={notify} />}
+      {view === 'editor' && editingTemplate && <Editor template={editingTemplate} data={data} back={() => navigate('library')} reload={reload} notify={notify} openCreated={openTemplate} />}
       {view === 'task' && selectedTask && <TaskView initialTask={selectedTask} back={() => navigate('tasks')} reload={reload} notify={notify} />}
       {view === 'users' && <UsersView data={data} reload={reload} notify={notify} />}
       {view === 'departments' && <DepartmentsView data={data} reload={reload} notify={notify} />}
@@ -271,16 +272,18 @@ function LibraryView({ data, openTemplate, newTemplate, startTask, reload, notif
   </section>{cloneTarget && <div className="modal-wrap"><div className="scrim" onClick={() => setCloneTarget(null)}/><form className="modal" onSubmit={cloneTemplate}><div className="modal-head"><div><span className="eyebrow">克隆流程</span><h2>给新流程起个名字</h2></div><button type="button" className="icon-button" onClick={() => setCloneTarget(null)}><X size={20}/></button></div><p className="modal-intro">将从“{cloneTarget.name}”复制当前版本，并创建一个独立的 V1 流程。</p><Field label="新流程名称"><input autoFocus required value={cloneName} onChange={e => setCloneName(e.target.value)} /></Field><button className="primary full" disabled={cloning}>{cloning ? '正在克隆…' : '确认克隆'}</button></form></div>}</>
 }
 
-function Editor({ template, data, back, reload, notify }) {
+function Editor({ template, data, back, reload, notify, openCreated }) {
   const [meta, setMeta] = useState({ name: template.name, description: template.description, category: template.category, visibility: template.visibility, visibleDepartments: template.visible_departments || [], visibleUsers: template.visible_users || [] })
   const [showSettings, setShowSettings] = useState(false)
   const [publishOpen, setPublishOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
+  const [stepDeleteTarget, setStepDeleteTarget] = useState(null)
   const [nodes, setNodes, onNodesChange] = useNodesState(template.graph.nodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState(template.graph.edges)
   const [selectedId, setSelectedId] = useState(nodes[0]?.id || null)
   const [relationTargetId, setRelationTargetId] = useState('')
   const [saving, setSaving] = useState(false)
+  const savingRef = useRef(false)
   const selected = nodes.find(n => n.id === selectedId)
   const selectedSystems = selected ? getSystems(selected.data) : []
   const incomingEdges = selected ? edges.filter(edge => edge.target === selected.id) : []
@@ -316,10 +319,10 @@ function Editor({ template, data, back, reload, notify }) {
     setSelectedId(id)
   }
   const addPrevious = () => insertBefore({ ...blankStep(), title: '上一步' })
-  const removeSelected = () => {
-    setNodes(list => list.filter(n => n.id !== selectedId))
-    setEdges(list => list.filter(e => e.source !== selectedId && e.target !== selectedId))
-    setSelectedId(null)
+  const removeSelected = id => {
+    setNodes(list => list.filter(n => n.id !== id))
+    setEdges(list => list.filter(e => e.source !== id && e.target !== id))
+    if (selectedId === id) setSelectedId(null)
   }
   const removeSelectedEdges = () => setEdges(list => list.filter(edge => !edge.selected))
   const removeEdge = edgeId => setEdges(list => list.filter(edge => edge.id !== edgeId))
@@ -331,19 +334,44 @@ function Editor({ template, data, back, reload, notify }) {
     setRelationTargetId('')
   }
   const save = async () => {
+    if (savingRef.current) return
     if (!meta.name.trim()) return notify('请填写流程名称')
+    savingRef.current = true
     setSaving(true)
-    const payload = { ...meta, graph: { nodes: nodes.map(({ id, type, position, data }) => ({ id, type, position, data })), edges: edges.map(({ id, source, target }) => ({ id, source, target })) } }
-    if (template.id) await api(`/api/templates/${template.id}`, { method: 'PUT', body: JSON.stringify(payload) })
-    else await api('/api/templates', { method: 'POST', body: JSON.stringify(payload) })
-    await reload(); setSaving(false); setPublishOpen(false); notify(template.id ? `已发布 V${template.current_version + 1}` : '流程已创建')
+    try {
+      const payload = { ...meta, graph: { nodes: nodes.map(({ id, type, position, data }) => ({ id, type, position, data })), edges: edges.map(({ id, source, target }) => ({ id, source, target })) } }
+      const result = template.id
+        ? await api(`/api/templates/${template.id}`, { method: 'PUT', body: JSON.stringify(payload) })
+        : await api('/api/templates', { method: 'POST', body: JSON.stringify(payload) })
+      await reload()
+      setPublishOpen(false)
+      notify(template.id ? `已发布 V${template.current_version + 1}` : '流程已创建')
+      if (!template.id) await openCreated(result.id)
+    } catch (error) {
+      notify(error.message)
+    } finally {
+      savingRef.current = false
+      setSaving(false)
+    }
   }
   const deleteTemplate = async () => {
     setSaving(true)
     try { await api(`/api/templates/${template.id}`, { method:'DELETE' }); await reload(); notify('流程已删除，已有待办仍会保留'); back() }
     finally { setSaving(false) }
   }
-  const decorated = nodes.map(n => ({ ...n, data: { ...n.data } }))
+  const selectNode = (_, node) => {
+    setSelectedId(node.id)
+    setEdges(list => list.map(edge => edge.selected ? { ...edge, selected:false } : edge))
+  }
+  const selectEdge = (_, edge) => {
+    setSelectedId(null)
+    setEdges(list => list.map(item => ({ ...item, selected:item.id === edge.id })))
+  }
+  const clearSelection = () => {
+    setSelectedId(null)
+    setEdges(list => list.map(edge => edge.selected ? { ...edge, selected:false } : edge))
+  }
+  const decorated = nodes.map(n => ({ ...n, selected:n.id === selectedId, data: { ...n.data } }))
   return <section className="editor-page enter">
     <div className="editor-bar">
       <button className="icon-button" onClick={back}><ArrowLeft size={20}/></button>
@@ -353,7 +381,7 @@ function Editor({ template, data, back, reload, notify }) {
     <div className="editor-workspace">
       <div className="canvas-wrap">
         <div className="canvas-toolbar"><div className="tool-group"><button onClick={addPrevious}><ArrowLeft size={16}/>上一步</button><button onClick={addNode}><Plus size={16}/>下一步</button></div>{edges.some(edge => edge.selected) && <><i/><button className="delete-edge-tool" onClick={removeSelectedEdges}><Trash2 size={15}/>删除连线</button></>}</div>
-        <ReactFlow nodes={decorated} edges={edges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onConnect={connect} nodeTypes={nodeTypes} defaultEdgeOptions={defaultEdgeOptions} deleteKeyCode={['Backspace','Delete']} onNodeClick={(_, node) => setSelectedId(node.id)} fitView fitViewOptions={{ padding: .25 }} minZoom={.35}>
+        <ReactFlow nodes={decorated} edges={edges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onConnect={connect} nodeTypes={nodeTypes} defaultEdgeOptions={defaultEdgeOptions} deleteKeyCode={['Backspace','Delete']} nodesDeletable={false} onNodeClick={selectNode} onEdgeClick={selectEdge} onPaneClick={clearSelection} fitView fitViewOptions={{ padding: .25 }} minZoom={.35}>
           <Background color="#d8ddd8" gap={22} size={1}/><Controls showInteractive={false}/><MiniMap pannable zoomable nodeColor="#dbe8df" maskColor="rgba(244,245,241,.75)"/>
         </ReactFlow>
         {!nodes.length && <button className="canvas-empty" onClick={addNode}><span><Plus size={24}/></span><b>添加第一个步骤</b><small>从这里开始梳理办理顺序</small></button>}
@@ -370,7 +398,7 @@ function Editor({ template, data, back, reload, notify }) {
             <Field label="注意事项"><textarea value={selected.data.note} onChange={e => updateSelected('note', e.target.value)} placeholder="容易忘记的细节"/></Field>
             <div className="relation-editor"><div className="relation-head"><b>步骤关系</b><span>管理当前步骤与其他步骤的连线</span></div><RelationGroup label="前置步骤" edges={incomingEdges} nodes={nodes} endpoint="source" remove={removeEdge}/><RelationGroup label="后续步骤" edges={outgoingEdges} nodes={nodes} endpoint="target" remove={removeEdge}/><div className="relation-add"><select aria-label="选择后续步骤" value={relationTargetId} onChange={event => setRelationTargetId(event.target.value)}><option value="">选择后续步骤</option>{availableRelationTargets.map(node => <option value={node.id} key={node.id}>{node.data.title}</option>)}</select><button type="button" onClick={addRelation} disabled={!relationTargetId}><Plus size={14}/>连接</button></div></div>
             <label className="switch-row"><div><b>允许跳过</b><span>实际办理时可以略过此步骤</span></div><input type="checkbox" checked={selected.data.optional} onChange={e => updateSelected('optional', e.target.checked)}/><i/></label>
-            <button className="danger-link" onClick={removeSelected}>删除这个步骤</button>
+            <button className="danger-link" onClick={() => setStepDeleteTarget(selected)}>删除这个步骤</button>
           </div>
         </> : <div className="inspector-empty"><GripVertical size={26}/><b>选择一个步骤</b><p>点击流程图中的节点，在这里编辑详细内容。</p></div>}
       </aside>
@@ -386,6 +414,7 @@ function Editor({ template, data, back, reload, notify }) {
       {template.id && <div className="flow-danger-zone"><div><b>删除流程</b><span>已有待办保留，但流程将从流程库移除。</span></div><button onClick={() => { setShowSettings(false); setDeleteOpen(true) }}>删除</button></div>}
     </div></div>}
     {publishOpen && <div className="modal-wrap"><div className="scrim" onClick={() => setPublishOpen(false)}/><div className="modal confirm-modal"><div className="confirm-icon"><UploadCloud size={23}/></div><div className="modal-head"><div><span className="eyebrow">确认发布</span><h2>发布为 V{template.current_version + 1}？</h2></div><button className="icon-button" onClick={() => setPublishOpen(false)}><X size={20}/></button></div><p className="modal-intro">流程编号仍为 {template.flow_code}。新建待办将使用这个版本，已经创建的待办不会变化。</p><div className="publish-summary"><span>流程名称</span><b>{meta.name || '未命名流程'}</b><small>当前 V{template.current_version} → 新版本 V{template.current_version + 1}</small></div><div className="modal-actions"><button className="ghost" onClick={() => setPublishOpen(false)}>再检查一下</button><button className="primary" onClick={save} disabled={saving}>{saving ? '正在发布…' : '确认发布'}</button></div></div></div>}
+    {stepDeleteTarget && <div className="modal-wrap"><div className="scrim" onClick={() => setStepDeleteTarget(null)}/><div className="modal confirm-modal danger-confirm"><div className="confirm-icon"><Trash2 size={23}/></div><div className="modal-head"><div><span className="eyebrow">删除步骤</span><h2>确定删除“{stepDeleteTarget.data.title}”？</h2></div><button className="icon-button" onClick={() => setStepDeleteTarget(null)}><X size={20}/></button></div><p className="modal-intro">与这个步骤相连的 {edges.filter(edge => edge.source === stepDeleteTarget.id || edge.target === stepDeleteTarget.id).length} 条关系也会一并删除，此操作将在发布后生效。</p><div className="modal-actions"><button className="ghost" onClick={() => setStepDeleteTarget(null)}>取消</button><button className="danger-button" onClick={() => { removeSelected(stepDeleteTarget.id); setStepDeleteTarget(null) }}>确认删除步骤</button></div></div></div>}
     {deleteOpen && <div className="modal-wrap"><div className="scrim" onClick={() => setDeleteOpen(false)}/><div className="modal confirm-modal danger-confirm"><div className="confirm-icon"><Trash2 size={23}/></div><div className="modal-head"><div><span className="eyebrow">删除流程</span><h2>确定删除“{template.name}”？</h2></div><button className="icon-button" onClick={() => setDeleteOpen(false)}><X size={20}/></button></div><p className="modal-intro">{template.flow_code} 的版本将不再出现在流程库，也不能再创建新待办；已有待办不会受影响。</p><div className="modal-actions"><button className="ghost" onClick={() => setDeleteOpen(false)}>取消</button><button className="danger-button" onClick={deleteTemplate} disabled={saving}>{saving ? '正在删除…' : '确认删除流程'}</button></div></div></div>}
   </section>
 }

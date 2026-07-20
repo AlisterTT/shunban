@@ -9,8 +9,8 @@ import {
   Archive, ArrowLeft, Building2, Check, CheckCircle2, ChevronDown, ChevronRight,
   CircleUserRound, Clock3, Copy, Database, Download, ExternalLink, FileText,
   Eye, EyeOff, FolderTree, GitBranch, GripVertical, Home, KeyRound, ListTodo, LockKeyhole, LogOut,
-  Menu, MoreHorizontal, Network, Pencil, Plus, RotateCcw, Search,
-  Settings, Share2, Sparkles, Trash2, UploadCloud, UserRound, Users, X
+  Link2, Menu, MoreHorizontal, Network, Pencil, Plus, RotateCcw, Search,
+  Settings, Share2, Sparkles, Trash2, UploadCloud, UserPlus, UserRound, Users, X
 } from 'lucide-react'
 import './styles.css'
 
@@ -27,7 +27,7 @@ const api = async (url, options = {}) => {
   const text = await response.text()
   let result = {}
   try { result = text ? JSON.parse(text) : {} } catch { result = {} }
-  if (!response.ok) { const error = new Error(result.message || '操作失败'); error.status = response.status; throw error }
+  if (!response.ok) { const error = new Error(result.message || '操作失败'); error.status = response.status; error.field = result.field; throw error }
   return result
 }
 
@@ -125,6 +125,59 @@ function LoginPage({ onLogin }) {
         {error && <p className="form-error">{error}</p>}
         <button className="primary login-submit" disabled={loading}>{loading?'正在登录…':'进入工作台'}<span>→</span></button>
       </form>
+      <Copyright className="login-copyright" />
+    </section>
+  </main>
+}
+
+function InvitationRegistrationPage({ token }) {
+  const [invitation, setInvitation] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [invalid, setInvalid] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [showPassword, setShowPassword] = useState(false)
+  const [form, setForm] = useState({ name:'', username:'', password:'', departmentId:'', remember:true })
+  const [fieldError, setFieldError] = useState(null)
+  const [error, setError] = useState('')
+  const usernameRef = useRef(null)
+  useEffect(() => {
+    api(`/api/public/invitations/${encodeURIComponent(token)}`).then(result => {
+      setInvitation(result)
+      setForm(current => ({ ...current, departmentId:String(result.departments[0]?.id || '') }))
+    }).catch(err => setInvalid(err.message)).finally(() => setLoading(false))
+  }, [token])
+  const submit = async event => {
+    event.preventDefault(); setFieldError(null); setError(''); setSubmitting(true)
+    try {
+      const result = await api(`/api/public/invitations/${encodeURIComponent(token)}/register`, { method:'POST', body:JSON.stringify(form) })
+      saveToken(result.token, result.remember)
+      window.location.assign('/')
+    } catch (err) {
+      if (err.field) {
+        setFieldError({ field:err.field, message:err.message })
+        if (err.field === 'username') usernameRef.current?.focus()
+      } else setError(err.message)
+      setSubmitting(false)
+    }
+  }
+  return <main className="login-page invite-page">
+    <section className="login-intro">
+      <Brand />
+      <div className="login-statement"><span>JOIN SHUNBAN</span><h1>把办事经验，<br/>变成自己的步骤。</h1><p>注册后即可使用管理员分享的流程，并创建自己的工作待办。</p></div>
+      <div className="invite-scope-note"><UserPlus size={18}/><span>邀请注册仅创建普通用户<br/><small>账号部门由邀请范围限定</small></span></div>
+    </section>
+    <section className="login-form-side">
+      {loading ? <div className="invite-state"><span className="brand-mark"><Link2 size={21}/></span><b>正在检查邀请链接…</b></div> : invalid ? <div className="invite-state"><span className="brand-mark invalid"><X size={21}/></span><h2>邀请链接不可用</h2><p>{invalid}</p><button className="secondary" onClick={() => window.location.assign('/')}>返回登录</button></div> : <form className="login-form invite-form" onSubmit={submit}>
+        <div className="login-heading"><span className="eyebrow">{invitation.creatorName} 邀请你加入</span><h2>注册顺办账号</h2><p>请选择所属部门并设置登录信息。</p></div>
+        <Field label="姓名"><input autoFocus required value={form.name} onChange={event => { setForm({...form,name:event.target.value}); if (fieldError?.field === 'name') setFieldError(null) }} aria-invalid={fieldError?.field === 'name'}/>{fieldError?.field === 'name' && <small className="field-error">{fieldError.message}</small>}</Field>
+        <Field label="用户名"><input ref={usernameRef} required value={form.username} onChange={event => { setForm({...form,username:event.target.value}); if (fieldError?.field === 'username') setFieldError(null) }} autoComplete="username" aria-invalid={fieldError?.field === 'username'}/>{fieldError?.field === 'username' && <small className="field-error">{fieldError.message}</small>}</Field>
+        <Field label="密码"><div className="password-input"><input required minLength="6" type={showPassword?'text':'password'} value={form.password} onChange={event => { setForm({...form,password:event.target.value}); if (fieldError?.field === 'password') setFieldError(null) }} autoComplete="new-password" aria-invalid={fieldError?.field === 'password'}/><button type="button" aria-label={showPassword?'隐藏密码':'显示密码'} onClick={() => setShowPassword(!showPassword)}>{showPassword?<EyeOff size={17}/>:<Eye size={17}/>}</button></div>{fieldError?.field === 'password' && <small className="field-error">{fieldError.message}</small>}</Field>
+        <Field label="所属部门"><select required value={form.departmentId} onChange={event => { setForm({...form,departmentId:event.target.value}); if (fieldError?.field === 'departmentId') setFieldError(null) }}>{invitation.departments.map(department => <option key={department.id} value={department.id}>{department.label || department.name}</option>)}</select>{fieldError?.field === 'departmentId' && <small className="field-error">{fieldError.message}</small>}</Field>
+        <label className="remember-row"><input type="checkbox" checked={form.remember} onChange={event => setForm({...form,remember:event.target.checked})}/><i/><span><b>保持登录状态</b><small>在这台设备上保留 30 天</small></span></label>
+        {error && <p className="form-error">{error}</p>}
+        <button className="primary login-submit" disabled={submitting}>{submitting?'正在注册…':'注册并进入顺办'}<span>→</span></button>
+        <small className="invite-expiry">邀请有效至 {formatDateTime(invitation.expiresAt)}</small>
+      </form>}
       <Copyright className="login-copyright" />
     </section>
   </main>
@@ -629,19 +682,63 @@ function TaskView({ initialTask, back, reload, notify }) {
 
 function UsersView({ data, reload, notify }) {
   const [open, setOpen] = useState(false)
+  const [formError, setFormError] = useState(null)
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [resetTarget, setResetTarget] = useState(null)
   const [manageTarget, setManageTarget] = useState(null)
   const [resetResult, setResetResult] = useState(null)
   const [resetting, setResetting] = useState(false)
   const [form, setForm] = useState({ username: '', name: '', departmentId: '', role: 'user', password: '' })
+  const [inviteOpen, setInviteOpen] = useState(false)
+  const [invitations, setInvitations] = useState([])
+  const [inviteForm, setInviteForm] = useState({ departmentIds:[], days:3 })
+  const [inviteError, setInviteError] = useState('')
+  const [creatingInvite, setCreatingInvite] = useState(false)
+  const [createdLink, setCreatedLink] = useState('')
+  const usernameRef = useRef(null)
   const isSystemAdmin = data.currentUser.is_system_admin
   const scopeIds = isSystemAdmin ? data.departments.map(department => department.id) : departmentDescendantIds(data.departments, data.currentUser.department_id)
   const scopeDepartments = data.departments.filter(department => scopeIds.includes(department.id))
   const visibleUsers = isSystemAdmin ? data.users : data.users.filter(user => scopeIds.includes(user.department_id))
   const options = departmentOptions(scopeDepartments)
-  const openCreate = () => { setForm({ username:'', name:'', departmentId:isSystemAdmin ? '' : String(data.currentUser.department_id || ''), role:'user', password:'' }); setOpen(true) }
-  const submit = async e => { e.preventDefault(); try { await api('/api/users', { method:'POST', body:JSON.stringify(form) }); setOpen(false); await reload(); notify('用户已添加') } catch(error) { notify(error.message) } }
+  const openCreate = () => { setFormError(null); setForm({ username:'', name:'', departmentId:isSystemAdmin ? '' : String(data.currentUser.department_id || ''), role:'user', password:'' }); setOpen(true) }
+  const submit = async e => {
+    e.preventDefault(); setFormError(null)
+    try { await api('/api/users', { method:'POST', body:JSON.stringify(form) }); setOpen(false); await reload(); notify('用户已添加') }
+    catch(error) {
+      setFormError({ field:error.field || 'form', message:error.message })
+      if (error.field === 'username') usernameRef.current?.focus()
+    }
+  }
+  const loadInvitations = async () => setInvitations(await api('/api/invitations'))
+  const openInviteManager = async () => {
+    setInviteError(''); setCreatedLink('')
+    setInviteForm({ departmentIds:isSystemAdmin ? [] : data.currentUser.department_id ? [data.currentUser.department_id] : [], days:3 })
+    setInviteOpen(true)
+    try { await loadInvitations() } catch(error) { setInviteError(error.message) }
+  }
+  const createInvitation = async event => {
+    event.preventDefault(); setInviteError(''); setCreatingInvite(true)
+    try {
+      const result = await api('/api/invitations', { method:'POST', body:JSON.stringify(inviteForm) })
+      setCreatedLink(`${window.location.origin}/invite/${result.token}`)
+      await loadInvitations()
+    } catch(error) { setInviteError(error.message) }
+    finally { setCreatingInvite(false) }
+  }
+  const copyInviteLink = async () => {
+    try {
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(createdLink)
+      else {
+        const input = document.createElement('textarea'); input.value = createdLink; input.style.position = 'fixed'; input.style.opacity = '0'; document.body.appendChild(input); input.select(); document.execCommand('copy'); input.remove()
+      }
+      notify('邀请链接已复制')
+    } catch { notify('复制失败，请手动选择链接') }
+  }
+  const revokeInvitation = async invitation => {
+    try { await api(`/api/invitations/${invitation.id}`, { method:'DELETE' }); await loadInvitations(); notify('邀请链接已撤销') }
+    catch(error) { setInviteError(error.message) }
+  }
   const remove = async () => { try { await api(`/api/users/${deleteTarget.id}`, { method: 'DELETE' }); setDeleteTarget(null); await reload(); notify('用户已删除') } catch (error) { notify(error.message) } }
   const resetPassword = async () => { setResetting(true); try { const result = await api(`/api/users/${resetTarget.id}/reset-password`, { method:'POST' }); setResetResult({ ...resetTarget, password:result.password }) } catch (error) { notify(error.message) } finally { setResetting(false) } }
   const saveUserSettings = async e => { e.preventDefault(); try { await api(`/api/users/${manageTarget.id}/settings`, { method:'PATCH', body:JSON.stringify({ departmentId:manageTarget.nextDepartmentId, role:manageTarget.nextRole }) }); setManageTarget(null); await reload(); notify('用户设置已更新') } catch(error) { notify(error.message) } }
@@ -649,7 +746,7 @@ function UsersView({ data, reload, notify }) {
   const closeReset = () => { setResetTarget(null); setResetResult(null) }
   const copyPassword = async () => { try { await navigator.clipboard.writeText(resetResult.password); notify('新密码已复制') } catch { notify('复制失败，请手动选择密码') } }
   return <section className="page enter">
-    <div className="page-lead"><div><h2>{isSystemAdmin ? '全部登录用户' : '本部门用户'}</h2><p>{isSystemAdmin ? '管理全部账号、部门归属和角色权限。' : '管理本部门及下级部门的普通用户。'}</p></div><button className="primary" onClick={openCreate} disabled={!isSystemAdmin && !data.currentUser.department_id}><Plus size={18}/>添加用户</button></div>
+    <div className="page-lead"><div><h2>{isSystemAdmin ? '全部登录用户' : '本部门用户'}</h2><p>{isSystemAdmin ? '管理全部账号、部门归属和角色权限。' : '管理本部门及下级部门的普通用户。'}</p></div><div className="page-actions"><button className="secondary" onClick={openInviteManager} disabled={!isSystemAdmin && !data.currentUser.department_id}><Link2 size={17}/>邀请注册</button><button className="primary" onClick={openCreate} disabled={!isSystemAdmin && !data.currentUser.department_id}><Plus size={18}/>添加用户</button></div></div>
     {!isSystemAdmin && !data.currentUser.department_id && <div className="permission-note">当前部门管理员尚未分配所属部门，请联系系统管理员设置后再管理用户。</div>}
     <div className="user-table">
       <div className="table-head"><span>用户</span><span>用户名</span><span>部门</span><span>角色</span><span/></div>
@@ -662,7 +759,8 @@ function UsersView({ data, reload, notify }) {
         return <div className="table-row" key={u.id}><span className="user-cell"><i>{u.name.slice(-1)}</i><b>{u.name}</b></span><span>{u.username}</span><span>{u.department_name || '—'}</span><span>{targetIsSystemAdmin ? '系统管理员' : u.role === 'department_admin' ? '部门管理员' : '普通用户'}</span><span className="user-actions">{isCurrent && <small className="current-user">当前登录</small>}{!isCurrent && targetIsSystemAdmin && <small className="protected-user">不可修改</small>}{canOpenSettings && <button className="edit-button" title="用户设置" aria-label={`管理${u.name}`} onClick={() => setManageTarget({ ...u, nextDepartmentId:String(u.department_id || ''), nextRole:u.role })}><Settings size={16}/></button>}{canDelete && <button className="delete-button" title="删除用户" aria-label={`删除${u.name}`} onClick={() => setDeleteTarget(u)}><Trash2 size={16}/></button>}</span></div>
       })}
     </div>
-    {open && <div className="modal-wrap"><div className="scrim" onClick={() => setOpen(false)}/><form className="modal" onSubmit={submit}><div className="modal-head"><div><span className="eyebrow">用户管理</span><h2>添加登录用户</h2></div><button type="button" className="icon-button" onClick={() => setOpen(false)}><X size={20}/></button></div><Field label="姓名"><input required value={form.name} onChange={e => setForm({...form, name:e.target.value})}/></Field><Field label="用户名"><input required value={form.username} onChange={e => setForm({...form, username:e.target.value})}/></Field><Field label="初始密码"><input required minLength="6" type="password" value={form.password} onChange={e => setForm({...form, password:e.target.value})} placeholder="至少 6 位"/></Field><Field label="所属部门"><select required value={form.departmentId} onChange={e => setForm({...form, departmentId:e.target.value})}><option value="">请选择</option>{options.map(d => <option value={d.id} key={d.id}>{d.label}</option>)}</select></Field>{isSystemAdmin && <Field label="角色"><select value={form.role} onChange={e => setForm({...form, role:e.target.value})}><option value="user">普通用户</option><option value="department_admin">部门管理员</option></select></Field>}<button className="primary full">确认添加</button></form></div>}
+    {open && <div className="modal-wrap"><div className="scrim" onClick={() => setOpen(false)}/><form className="modal" onSubmit={submit}><div className="modal-head"><div><span className="eyebrow">用户管理</span><h2>添加登录用户</h2></div><button type="button" className="icon-button" onClick={() => setOpen(false)}><X size={20}/></button></div><Field label="姓名"><input required value={form.name} onChange={e => setForm({...form, name:e.target.value})}/></Field><Field label="用户名"><input ref={usernameRef} required value={form.username} onChange={e => { setForm({...form, username:e.target.value}); if (formError?.field === 'username') setFormError(null) }} aria-invalid={formError?.field === 'username'}/>{formError?.field === 'username' && <small className="field-error">{formError.message}</small>}</Field><Field label="初始密码"><input required minLength="6" type="password" value={form.password} onChange={e => setForm({...form, password:e.target.value})} placeholder="至少 6 位"/></Field><Field label="所属部门"><select required value={form.departmentId} onChange={e => setForm({...form, departmentId:e.target.value})}><option value="">请选择</option>{options.map(d => <option value={d.id} key={d.id}>{d.label}</option>)}</select></Field>{isSystemAdmin && <Field label="角色"><select value={form.role} onChange={e => setForm({...form, role:e.target.value})}><option value="user">普通用户</option><option value="department_admin">部门管理员</option></select></Field>}{formError?.field === 'form' && <p className="form-error">{formError.message}</p>}<button className="primary full">确认添加</button></form></div>}
+    {inviteOpen && <div className="modal-wrap"><div className="scrim" onClick={() => setInviteOpen(false)}/><div className="modal invite-modal"><div className="modal-head"><div><span className="eyebrow">用户邀请</span><h2>生成注册链接</h2></div><button type="button" className="icon-button" onClick={() => setInviteOpen(false)}><X size={20}/></button></div><form onSubmit={createInvitation}><ChoiceGroup label="允许加入的部门" items={options} selected={inviteForm.departmentIds} onChange={departmentIds => setInviteForm({...inviteForm,departmentIds})}/><Field label="链接有效期"><select value={inviteForm.days} onChange={event => setInviteForm({...inviteForm,days:Number(event.target.value)})}><option value="1">1 天</option><option value="3">3 天</option><option value="7">7 天</option></select></Field>{inviteError && <p className="form-error">{inviteError}</p>}<button className="primary full" disabled={creatingInvite}>{creatingInvite ? '正在生成…' : '生成邀请链接'}</button></form>{createdLink && <div className="created-invite"><span>新邀请链接</span><div><input readOnly value={createdLink}/><button onClick={copyInviteLink}><Copy size={15}/>复制</button></div><small>链接只在创建后显示一次，请现在复制；有效期内可重复注册。</small></div>}<div className="invite-history"><div className="invite-history-head"><b>邀请记录</b><span>{invitations.length} 条</span></div>{invitations.map(invitation => <div className="invite-row" key={invitation.id}><div><b>{invitation.departments.map(department => department.name).join('、') || '部门已删除'}</b><small>{invitation.creatorName} 创建 · 有效至 {formatDateTime(invitation.expiresAt)}</small></div><span className={`invite-status ${invitation.status}`}>{invitation.status === 'active' ? `已注册 ${invitation.registrationCount} 人` : invitation.status === 'revoked' ? '已撤销' : '已过期'}</span>{invitation.status === 'active' && <button className="danger-link" onClick={() => revokeInvitation(invitation)}>撤销</button>}</div>)}{!invitations.length && <p className="invite-empty">还没有创建过邀请链接。</p>}</div></div></div>}
     {manageTarget && <div className="modal-wrap"><div className="scrim" onClick={() => setManageTarget(null)}/><form className="modal" onSubmit={saveUserSettings}><div className="modal-head"><div><span className="eyebrow">用户设置</span><h2>管理“{manageTarget.name}”</h2></div><button type="button" className="icon-button" onClick={() => setManageTarget(null)}><X size={20}/></button></div><p className="modal-intro">账号：{manageTarget.username}。部门归属会影响按部门分享的流程范围。</p><Field label="所属部门"><select required value={manageTarget.nextDepartmentId} onChange={e => setManageTarget({...manageTarget, nextDepartmentId:e.target.value})}><option value="">请选择</option>{options.map(d => <option value={d.id} key={d.id}>{d.label}</option>)}</select></Field>{isSystemAdmin && <Field label="用户角色"><select value={manageTarget.nextRole} onChange={e => setManageTarget({...manageTarget, nextRole:e.target.value})}><option value="user">普通用户</option><option value="department_admin">部门管理员</option></select></Field>}<div className="user-security-zone"><div><b>登录密码</b><span>生成随机新密码，并让旧密码和已有登录失效。</span></div><button type="button" className="ghost" onClick={openPasswordReset}><KeyRound size={15}/>随机重置</button></div><button className="primary full" disabled={String(manageTarget.department_id || '') === String(manageTarget.nextDepartmentId) && manageTarget.role === manageTarget.nextRole}>保存用户设置</button></form></div>}
     {deleteTarget && <div className="modal-wrap"><div className="scrim" onClick={() => setDeleteTarget(null)}/><div className="modal confirm-modal danger-confirm"><div className="confirm-icon"><Trash2 size={23}/></div><div className="modal-head"><div><span className="eyebrow">删除用户</span><h2>确定删除“{deleteTarget.name}”？</h2></div><button className="icon-button" onClick={() => setDeleteTarget(null)}><X size={20}/></button></div><p className="modal-intro">该用户将无法继续登录。此操作不会删除其他用户。</p><div className="modal-actions"><button className="ghost" onClick={() => setDeleteTarget(null)}>取消</button><button className="danger-button" onClick={remove}>确认删除用户</button></div></div></div>}
     {resetTarget && <div className="modal-wrap"><div className="scrim" onClick={closeReset}/><div className="modal confirm-modal reset-password-modal"><div className="confirm-icon"><KeyRound size={23}/></div><div className="modal-head"><div><span className="eyebrow">随机重置密码</span><h2>{resetResult ? '新密码已生成' : `重置“${resetTarget.name}”的密码？`}</h2></div><button className="icon-button" onClick={closeReset}><X size={20}/></button></div>{resetResult ? <><p className="modal-intro">旧密码和该账号原有登录已失效，请将下面的新密码交给本人。</p><div className="reset-password-value"><code>{resetResult.password}</code><button onClick={copyPassword}><Copy size={15}/>复制密码</button></div><button className="primary full" onClick={closeReset}>完成</button></> : <><p className="modal-intro">系统会生成一个随机密码，并立即让该账号的旧密码及已有登录失效。</p><div className="modal-actions"><button className="ghost" onClick={closeReset}>取消</button><button className="primary" onClick={resetPassword} disabled={resetting}>{resetting ? '正在重置…' : '确认随机重置'}</button></div></>}</div></div>}
@@ -787,8 +885,13 @@ function buildFlowStages(nodes, edges) {
   return Array.from({ length:maxLevel + 1 }, (_, level) => nodes.filter(node => levels.get(node.id) === level).sort((a,b) => (a.position?.y || 0) - (b.position?.y || 0))).filter(stage => stage.length)
 }
 function formatTaskTime(value) { return value ? value.replace('T',' ') : '' }
+function formatDateTime(value) {
+  if (!value) return ''
+  const date = new Date(`${String(value).replace(' ','T')}Z`)
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString('zh-CN', { hour12:false })
+}
 function Field({ label, children }) { return <label className="field"><span>{label}</span>{children}</label> }
-function ChoiceGroup({ label, items, selected, onChange }) { return <div className="choice-group"><span>{label}</span><div className="choice-list">{items.map(item => <label key={item.id}><input type="checkbox" checked={selected.includes(item.id)} onChange={e => onChange(e.target.checked ? [...selected,item.id] : selected.filter(id=>id!==item.id))}/><i>{item.name}</i></label>)}</div></div> }
+function ChoiceGroup({ label, items, selected, onChange }) { return <div className="choice-group"><span>{label}</span><div className="choice-list">{items.map(item => <label key={item.id}><input type="checkbox" checked={selected.includes(item.id)} onChange={e => onChange(e.target.checked ? [...selected,item.id] : selected.filter(id=>id!==item.id))}/><i>{item.label || item.name}</i></label>)}</div></div> }
 function GroupedUserChoice({ departments, users, selected, onChange }) {
   const [query, setQuery] = useState('')
   const options = departmentOptions(departments)
@@ -806,4 +909,7 @@ function Empty({ icon: Icon, title, text }) { return <div className="empty"><Ico
 const rootElement = document.getElementById('root')
 const appRoot = globalThis.__worktodoRoot || createRoot(rootElement)
 globalThis.__worktodoRoot = appRoot
-appRoot.render(<App />)
+const invitationMatch = window.location.pathname.match(/^\/invite\/([^/]+)\/?$/)
+let invitationToken = null
+try { invitationToken = invitationMatch ? decodeURIComponent(invitationMatch[1]) : null } catch { invitationToken = '' }
+appRoot.render(invitationMatch ? <InvitationRegistrationPage token={invitationToken}/> : <App />)

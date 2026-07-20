@@ -78,6 +78,24 @@ db.exec(`
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
   );
+  CREATE TABLE IF NOT EXISTS user_invitations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    token_hash TEXT NOT NULL UNIQUE,
+    creator_id INTEGER NOT NULL,
+    department_ids TEXT NOT NULL DEFAULT '[]',
+    expires_at TEXT NOT NULL,
+    revoked_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(creator_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+  CREATE TABLE IF NOT EXISTS invitation_registrations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    invitation_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(invitation_id) REFERENCES user_invitations(id) ON DELETE CASCADE,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
 `)
 
 const departmentColumns = db.prepare('PRAGMA table_info(departments)').all().map(column => column.name)
@@ -186,6 +204,26 @@ const sessionUser = req => {
   if (!token) return null
   return db.prepare(`SELECT u.*, d.name department_name, s.token FROM sessions s JOIN users u ON u.id=s.user_id LEFT JOIN departments d ON d.id=u.department_id WHERE s.token=? AND s.expires_at > datetime('now')`).get(token)
 }
+const createSession = (userId, remember = false) => {
+  const token = randomUUID().replaceAll('-', '') + randomUUID().replaceAll('-', '')
+  db.prepare(`INSERT INTO sessions(token, user_id, expires_at) VALUES (?, ?, datetime('now', ?))`).run(token, userId, `+${remember ? 30 : 1} day`)
+  return token
+}
+const invitationTokenHash = token => createHash('sha256').update(String(token || '')).digest('hex')
+const invitationAttempts = new Map()
+const resolveInvitation = token => {
+  const invitation = db.prepare(`SELECT i.*, u.name creator_name, u.role creator_role, u.is_system_admin creator_is_system_admin, u.department_id creator_department_id,
+    CASE WHEN i.revoked_at IS NULL AND i.expires_at > datetime('now') THEN 1 ELSE 0 END active
+    FROM user_invitations i JOIN users u ON u.id=i.creator_id WHERE i.token_hash=?`).get(invitationTokenHash(token))
+  if (!invitation || !invitation.active || !(invitation.creator_is_system_admin || invitation.creator_role === 'department_admin')) return null
+  const selectedIds = new Set(JSON.parse(invitation.department_ids || '[]').map(Number))
+  const allDepartments = db.prepare('SELECT * FROM departments ORDER BY id').all()
+  const scopeIds = invitation.creator_is_system_admin ? allDepartments.map(department => Number(department.id)) : departmentScopeIds(invitation.creator_department_id)
+  const scope = new Set(scopeIds)
+  const references = departmentReferences(allDepartments)
+  const departments = allDepartments.filter(department => selectedIds.has(Number(department.id)) && scope.has(Number(department.id))).map(department => ({ ...department, label:references.labels.get(Number(department.id)) || department.name }))
+  return departments.length ? { ...invitation, departments } : null
+}
 
 app.post('/api/auth/login', (req, res) => {
   const key = req.ip || 'unknown'
@@ -201,10 +239,50 @@ app.post('/api/auth/login', (req, res) => {
   }
   loginAttempts.delete(key)
   if (!user.password_hash.startsWith('scrypt$')) db.prepare('UPDATE users SET password_hash=? WHERE id=?').run(hashPassword(req.body.password), user.id)
-  const token = randomUUID().replaceAll('-', '') + randomUUID().replaceAll('-', '')
-  const days = req.body.remember ? 30 : 1
-  db.prepare(`INSERT INTO sessions(token, user_id, expires_at) VALUES (?, ?, datetime('now', ?))`).run(token, user.id, `+${days} day`)
+  const token = createSession(user.id, Boolean(req.body.remember))
   res.json({ token, user: publicUser(user), remember: Boolean(req.body.remember) })
+})
+
+app.get('/api/public/invitations/:token', (req, res) => {
+  const invitation = resolveInvitation(req.params.token)
+  if (!invitation) return res.status(410).json({ message: '邀请链接已失效或可选部门已不存在' })
+  res.json({ creatorName:invitation.creator_name, expiresAt:invitation.expires_at, departments:invitation.departments })
+})
+
+app.post('/api/public/invitations/:token/register', (req, res) => {
+  const attemptKey = `${req.ip || 'unknown'}:${invitationTokenHash(req.params.token).slice(0, 12)}`
+  const now = Date.now()
+  const attempt = invitationAttempts.get(attemptKey)
+  if (attempt && attempt.expiresAt > now && attempt.count >= 20) return res.status(429).json({ message: '注册尝试过多，请十分钟后再试' })
+  if (attempt?.expiresAt <= now) invitationAttempts.delete(attemptKey)
+  const fail = (status, message, field) => {
+    const current = invitationAttempts.get(attemptKey)
+    invitationAttempts.set(attemptKey, { count:(current?.count || 0) + 1, expiresAt:now + 10 * 60 * 1000 })
+    return res.status(status).json({ message, ...(field ? { field } : {}) })
+  }
+  const invitation = resolveInvitation(req.params.token)
+  if (!invitation) return fail(410, '邀请链接已失效或可选部门已不存在')
+  const name = String(req.body.name || '').trim()
+  const username = String(req.body.username || '').trim()
+  const password = String(req.body.password || '')
+  const departmentId = Number(req.body.departmentId)
+  if (!name) return fail(400, '请填写姓名', 'name')
+  if (!username) return fail(400, '请填写用户名', 'username')
+  if (password.length < 6) return fail(400, '密码至少需要 6 位', 'password')
+  if (!invitation.departments.some(department => Number(department.id) === departmentId)) return fail(400, '请选择邀请范围内的部门', 'departmentId')
+  if (db.prepare('SELECT id FROM users WHERE username=?').get(username)) return fail(409, '用户名已被使用，请换一个', 'username')
+  let result
+  try {
+    result = db.prepare(`INSERT INTO users(username, name, department_id, role, is_system_admin, password_hash) VALUES (?, ?, ?, 'user', 0, ?)`).run(username, name, departmentId, hashPassword(password))
+  } catch (error) {
+    if (/UNIQUE constraint failed: users\.username/.test(error.message || '')) return fail(409, '用户名已被使用，请换一个', 'username')
+    throw error
+  }
+  db.prepare('INSERT INTO invitation_registrations(invitation_id, user_id) VALUES (?, ?)').run(invitation.id, result.lastInsertRowid)
+  invitationAttempts.delete(attemptKey)
+  const user = db.prepare(`SELECT u.*, d.name department_name FROM users u LEFT JOIN departments d ON d.id=u.department_id WHERE u.id=?`).get(result.lastInsertRowid)
+  const remember = Boolean(req.body.remember)
+  res.json({ token:createSession(user.id, remember), user:publicUser(user), remember })
 })
 
 app.use('/api', (req, res, next) => {
@@ -418,10 +496,59 @@ app.delete('/api/tasks/:id', (req, res) => {
   res.json({ ok: true })
 })
 
+app.get('/api/invitations', (req, res) => {
+  if (!canManageUsers(req.user)) return res.status(403).json({ message: '没有用户管理权限' })
+  const rows = db.prepare(`SELECT i.*, u.name creator_name,
+    (SELECT COUNT(*) FROM invitation_registrations r WHERE r.invitation_id=i.id) registration_count,
+    CASE WHEN i.revoked_at IS NOT NULL THEN 'revoked' WHEN i.expires_at <= datetime('now') THEN 'expired' ELSE 'active' END status
+    FROM user_invitations i JOIN users u ON u.id=i.creator_id
+    ${req.user.is_system_admin ? '' : 'WHERE i.creator_id=?'} ORDER BY i.id DESC`).all(...(req.user.is_system_admin ? [] : [req.user.id]))
+  const allDepartments = db.prepare('SELECT * FROM departments ORDER BY id').all()
+  const references = departmentReferences(allDepartments)
+  const byId = new Map(allDepartments.map(department => [Number(department.id), department]))
+  res.json(rows.map(row => ({
+    id:row.id,
+    creatorName:row.creator_name,
+    createdAt:row.created_at,
+    expiresAt:row.expires_at,
+    status:row.status,
+    registrationCount:row.registration_count,
+    departments:JSON.parse(row.department_ids || '[]').map(Number).map(id => byId.has(id) ? { id, name:references.labels.get(id) || byId.get(id).name } : null).filter(Boolean),
+  })))
+})
+
+app.post('/api/invitations', (req, res) => {
+  if (!canManageUsers(req.user)) return res.status(403).json({ message: '没有用户管理权限' })
+  const days = Number(req.body.days)
+  if (![1,3,7].includes(days)) return res.status(400).json({ message: '邀请有效期只能选择 1 天、3 天或 7 天' })
+  const departmentIds = [...new Set((Array.isArray(req.body.departmentIds) ? req.body.departmentIds : []).map(Number).filter(Boolean))]
+  if (!departmentIds.length) return res.status(400).json({ message: '请至少选择一个可加入部门' })
+  const existingIds = new Set(db.prepare('SELECT id FROM departments').all().map(row => Number(row.id)))
+  if (departmentIds.some(id => !existingIds.has(id))) return res.status(400).json({ message: '所选部门不存在' })
+  if (!req.user.is_system_admin && departmentIds.some(id => !inDepartmentScope(req.user, id))) return res.status(403).json({ message: '只能邀请用户加入本部门及下级部门' })
+  const token = randomBytes(32).toString('base64url')
+  const result = db.prepare(`INSERT INTO user_invitations(token_hash, creator_id, department_ids, expires_at) VALUES (?, ?, ?, datetime('now', ?))`).run(
+    invitationTokenHash(token), req.user.id, JSON.stringify(departmentIds), `+${days} day`
+  )
+  const invitation = db.prepare('SELECT expires_at FROM user_invitations WHERE id=?').get(result.lastInsertRowid)
+  res.json({ id:Number(result.lastInsertRowid), token, expiresAt:invitation.expires_at })
+})
+
+app.delete('/api/invitations/:id', (req, res) => {
+  if (!canManageUsers(req.user)) return res.status(403).json({ message: '没有用户管理权限' })
+  const invitation = db.prepare('SELECT * FROM user_invitations WHERE id=?').get(req.params.id)
+  if (!invitation) return res.status(404).json({ message: '邀请不存在' })
+  if (!req.user.is_system_admin && Number(invitation.creator_id) !== Number(req.user.id)) return res.status(403).json({ message: '只能撤销自己创建的邀请' })
+  db.prepare("UPDATE user_invitations SET revoked_at=COALESCE(revoked_at, CURRENT_TIMESTAMP) WHERE id=?").run(invitation.id)
+  res.json({ ok:true })
+})
+
 app.post('/api/users', (req, res) => {
   if (!canManageUsers(req.user)) return res.status(403).json({ message: '没有用户管理权限' })
   if (!req.body.username?.trim() || !req.body.name?.trim()) return res.status(400).json({ message: '请填写用户名和姓名' })
   if (!req.body.password || String(req.body.password).length < 6) return res.status(400).json({ message: '初始密码至少需要 6 位' })
+  const username = req.body.username.trim()
+  if (db.prepare('SELECT id FROM users WHERE username=?').get(username)) return res.status(409).json({ message: '用户名已被使用，请换一个', field:'username' })
   const departmentId = Number(req.body.departmentId) || (req.user.is_system_admin ? null : req.user.department_id)
   if (!req.user.is_system_admin && !departmentId) return res.status(400).json({ message: '部门管理员尚未分配部门，不能添加用户' })
   if (!req.user.is_system_admin && !inDepartmentScope(req.user, departmentId)) return res.status(403).json({ message: '只能向本部门及下级部门添加用户' })
@@ -430,7 +557,7 @@ app.post('/api/users', (req, res) => {
   const role = req.user.is_system_admin && requestedRole === 'department_admin' ? 'department_admin' : 'user'
   if (role === 'department_admin' && !departmentId) return res.status(400).json({ message: '部门管理员必须先分配所属部门' })
   if (departmentId && !db.prepare('SELECT id FROM departments WHERE id=?').get(departmentId)) return res.status(400).json({ message: '所属部门不存在' })
-  const result = db.prepare('INSERT INTO users(username, name, department_id, role, password_hash) VALUES (?, ?, ?, ?, ?)').run(req.body.username.trim(), req.body.name.trim(), departmentId, role, hashPassword(req.body.password))
+  const result = db.prepare('INSERT INTO users(username, name, department_id, role, password_hash) VALUES (?, ?, ?, ?, ?)').run(username, req.body.name.trim(), departmentId, role, hashPassword(req.body.password))
   res.json({ id: Number(result.lastInsertRowid) })
 })
 
@@ -582,7 +709,7 @@ app.delete('/api/departments/:id', (req, res) => {
 
 app.use((error, _req, res, _next) => {
   console.error(error)
-  if (/UNIQUE constraint failed: users\.username/.test(error.message || '')) return res.status(409).json({ message: '用户名已存在' })
+  if (/UNIQUE constraint failed: users\.username/.test(error.message || '')) return res.status(409).json({ message: '用户名已被使用，请换一个', field:'username' })
   if (/UNIQUE constraint failed: departments\.name/.test(error.message || '')) return res.status(409).json({ message: '部门名称已存在' })
   res.status(500).json({ message: '服务器处理失败，请稍后重试' })
 })

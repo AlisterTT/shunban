@@ -37,8 +37,8 @@ npm run deploy
 
 ## Roles and Permissions
 
-- System administrator `admin`: manages all users and departments and can switch non-system accounts between regular user and department administrator roles.
-- Department administrator: manages its department subtree, including child-department maintenance and regular-user creation, deletion, and password resets. It cannot modify its own root department or manage other branches or administrators.
+- System administrator `admin`: manages all users and departments and can change the role and department of any non-system account.
+- Department administrator: manages its department subtree, including child-department maintenance and regular-user creation, transfer, deletion, and password resets. It cannot modify its own root department or manage other branches or administrators.
 - Regular user: uses personal tasks and workflows shared within the configured visibility scope.
 
 ## Docker Deployment (Recommended)

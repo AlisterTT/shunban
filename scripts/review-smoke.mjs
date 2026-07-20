@@ -96,6 +96,7 @@ try {
   const invitationList = await request('/api/invitations', { token:departmentAdminToken })
   expectStatus(invitationList, 200, '读取邀请记录')
   if (invitationList.data.find(item => item.id === invitation.data.id)?.registrationCount !== 2) throw new Error('邀请注册人数统计不正确')
+  if (invitationList.data.find(item => item.id === invitation.data.id)?.token !== invitation.data.token) throw new Error('有效邀请链接不能再次复制')
   expectStatus(await request(`/api/invitations/${invitation.data.id}`, { token:departmentAdminToken, method:'DELETE' }), 200, '撤销邀请链接')
   expectStatus(await request(`/api/public/invitations/${invitation.data.token}`), 410, '撤销后邀请失效')
 

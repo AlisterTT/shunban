@@ -81,6 +81,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS user_invitations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     token_hash TEXT NOT NULL UNIQUE,
+    token_value TEXT,
     creator_id INTEGER NOT NULL,
     department_ids TEXT NOT NULL DEFAULT '[]',
     expires_at TEXT NOT NULL,
@@ -97,6 +98,9 @@ db.exec(`
     FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
   );
 `)
+
+const invitationColumns = db.prepare('PRAGMA table_info(user_invitations)').all().map(column => column.name)
+if (!invitationColumns.includes('token_value')) db.exec('ALTER TABLE user_invitations ADD COLUMN token_value TEXT')
 
 const departmentColumns = db.prepare('PRAGMA table_info(departments)').all().map(column => column.name)
 if (!departmentColumns.includes('parent_id')) db.exec('ALTER TABLE departments ADD COLUMN parent_id INTEGER REFERENCES departments(id)')
@@ -513,6 +517,7 @@ app.get('/api/invitations', (req, res) => {
     expiresAt:row.expires_at,
     status:row.status,
     registrationCount:row.registration_count,
+    token:row.status === 'active' ? row.token_value || null : null,
     departments:JSON.parse(row.department_ids || '[]').map(Number).map(id => byId.has(id) ? { id, name:references.labels.get(id) || byId.get(id).name } : null).filter(Boolean),
   })))
 })
@@ -527,8 +532,8 @@ app.post('/api/invitations', (req, res) => {
   if (departmentIds.some(id => !existingIds.has(id))) return res.status(400).json({ message: '所选部门不存在' })
   if (!req.user.is_system_admin && departmentIds.some(id => !inDepartmentScope(req.user, id))) return res.status(403).json({ message: '只能邀请用户加入本部门及下级部门' })
   const token = randomBytes(32).toString('base64url')
-  const result = db.prepare(`INSERT INTO user_invitations(token_hash, creator_id, department_ids, expires_at) VALUES (?, ?, ?, datetime('now', ?))`).run(
-    invitationTokenHash(token), req.user.id, JSON.stringify(departmentIds), `+${days} day`
+  const result = db.prepare(`INSERT INTO user_invitations(token_hash, token_value, creator_id, department_ids, expires_at) VALUES (?, ?, ?, ?, datetime('now', ?))`).run(
+    invitationTokenHash(token), token, req.user.id, JSON.stringify(departmentIds), `+${days} day`
   )
   const invitation = db.prepare('SELECT expires_at FROM user_invitations WHERE id=?').get(result.lastInsertRowid)
   res.json({ id:Number(result.lastInsertRowid), token, expiresAt:invitation.expires_at })

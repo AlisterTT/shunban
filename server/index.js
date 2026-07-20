@@ -344,10 +344,15 @@ app.patch('/api/templates/:id/settings', (req, res) => {
   const current = db.prepare('SELECT * FROM templates WHERE id=? AND deleted_at IS NULL').get(req.params.id)
   if (!current) return res.status(404).json({ message: '流程不存在' })
   if (current.owner_id !== req.user.id) return res.status(403).json({ message: '只能设置自己创建的流程' })
+  const name = String(req.body.name ?? current.name).trim()
+  if (!name) return res.status(400).json({ message: '请填写流程名称' })
   const visibility = ['private','department','users','mixed','public'].includes(req.body.visibility) ? req.body.visibility : current.visibility
-  const visibleDepartments = ['department','mixed'].includes(visibility) && Array.isArray(req.body.visibleDepartments) ? req.body.visibleDepartments : []
-  const visibleUsers = ['users','mixed'].includes(visibility) && Array.isArray(req.body.visibleUsers) ? req.body.visibleUsers : []
-  db.prepare(`UPDATE templates SET description=?, category=?, visibility=?, visible_departments=?, visible_users=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`).run(
+  const currentDepartments = JSON.parse(current.visible_departments || '[]')
+  const currentUsers = JSON.parse(current.visible_users || '[]')
+  const visibleDepartments = ['department','mixed'].includes(visibility) ? (Array.isArray(req.body.visibleDepartments) ? req.body.visibleDepartments : currentDepartments) : []
+  const visibleUsers = ['users','mixed'].includes(visibility) ? (Array.isArray(req.body.visibleUsers) ? req.body.visibleUsers : currentUsers) : []
+  db.prepare(`UPDATE templates SET name=?, description=?, category=?, visibility=?, visible_departments=?, visible_users=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`).run(
+    name,
     String(req.body.description ?? current.description),
     String(req.body.category ?? current.category),
     visibility,

@@ -332,6 +332,7 @@ function LibraryView({ data, openTemplate, newTemplate, startTask, reload, notif
 
 function Editor({ template, data, back, reload, notify, openCreated }) {
   const [meta, setMeta] = useState({ name: template.name, description: template.description, category: template.category, visibility: template.visibility, visibleDepartments: template.visible_departments || [], visibleUsers: template.visible_users || [] })
+  const [savedName, setSavedName] = useState(template.name)
   const [showSettings, setShowSettings] = useState(false)
   const [publishOpen, setPublishOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
@@ -342,6 +343,7 @@ function Editor({ template, data, back, reload, notify, openCreated }) {
   const [relationTargetId, setRelationTargetId] = useState('')
   const [saving, setSaving] = useState(false)
   const [savingSettings, setSavingSettings] = useState(false)
+  const [savingName, setSavingName] = useState(false)
   const savingRef = useRef(false)
   const selected = nodes.find(n => n.id === selectedId)
   const selectedSystems = selected ? getSystems(selected.data) : []
@@ -392,14 +394,35 @@ function Editor({ template, data, back, reload, notify, openCreated }) {
     setEdges(list => [...list, { id:`e-${Date.now()}`, source:selected.id, target:targetId }])
     setRelationTargetId('')
   }
-  const saveSettings = async () => {
-    const settings = {
-      description:meta.description,
-      category:meta.category,
-      visibility:meta.visibility,
-      visibleDepartments:['department','mixed'].includes(meta.visibility) ? meta.visibleDepartments : [],
-      visibleUsers:['users','mixed'].includes(meta.visibility) ? meta.visibleUsers : [],
+  const normalizedSettings = (overrides = {}) => {
+    const current = { ...meta, ...overrides }
+    return {
+      name:current.name.trim(),
+      description:current.description,
+      category:current.category,
+      visibility:current.visibility,
+      visibleDepartments:['department','mixed'].includes(current.visibility) ? current.visibleDepartments : [],
+      visibleUsers:['users','mixed'].includes(current.visibility) ? current.visibleUsers : [],
     }
+  }
+  const saveName = async () => {
+    if (!template.id || savingName) return
+    const settings = normalizedSettings()
+    if (!settings.name) { setMeta(current => ({ ...current, name:savedName })); return notify('流程名称不能为空') }
+    if (settings.name === savedName) return
+    setSavingName(true)
+    try {
+      await api(`/api/templates/${template.id}/settings`, { method:'PATCH', body:JSON.stringify(settings) })
+      await reload()
+      setSavedName(settings.name)
+      setMeta(current => ({ ...current, name:settings.name }))
+      notify(`流程名称已保存，仍为 V${template.current_version}`)
+    } catch (error) { notify(error.message) }
+    finally { setSavingName(false) }
+  }
+  const saveSettings = async () => {
+    const settings = normalizedSettings()
+    if (!settings.name) return notify('请填写流程名称')
     setMeta(current => ({ ...current, ...settings }))
     if (!template.id) {
       setShowSettings(false)
@@ -410,6 +433,7 @@ function Editor({ template, data, back, reload, notify, openCreated }) {
     try {
       await api(`/api/templates/${template.id}/settings`, { method:'PATCH', body:JSON.stringify(settings) })
       await reload()
+      setSavedName(settings.name)
       setShowSettings(false)
       notify(`流程设置已保存，仍为 V${template.current_version}`)
     } catch (error) { notify(error.message) }
@@ -457,7 +481,7 @@ function Editor({ template, data, back, reload, notify, openCreated }) {
   return <section className="editor-page enter">
     <div className="editor-bar">
       <button className="icon-button" onClick={back}><ArrowLeft size={20}/></button>
-      <div className="editor-title"><input aria-label="流程名称" title="点击修改流程名称" value={meta.name} onChange={e => setMeta({ ...meta, name: e.target.value })}/><span>{template.id ? `${template.flow_code} · 当前 V${template.current_version} · 名称可修改` : '新流程草稿 · 名称可修改'}</span></div>
+      <div className="editor-title"><input aria-label="流程名称" title="修改后按回车或移开光标即可保存" value={meta.name} onChange={e => setMeta({ ...meta, name: e.target.value })} onBlur={saveName} onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur() }}/><span>{template.id ? `${template.flow_code} · 当前 V${template.current_version} · ${savingName ? '正在保存名称…' : '改名不增加版本'}` : '新流程草稿 · 名称可修改'}</span></div>
       <div className="editor-actions"><button className="secondary" onClick={() => setShowSettings(true)}><Share2 size={16}/><span className="hide-mobile">流程设置</span></button><button className="primary" onClick={() => template.id ? setPublishOpen(true) : save()} disabled={saving}>{saving ? '保存中…' : template.id ? '发布新版本' : '创建流程'}</button></div>
     </div>
     <div className="editor-workspace">

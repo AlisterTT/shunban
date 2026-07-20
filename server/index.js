@@ -272,6 +272,19 @@ const normalizeGraphDepartments = graph => {
   const references = departmentReferences(db.prepare('SELECT * FROM departments').all())
   return remapGraphDepartments(graph, references, references)
 }
+const clearGraphDepartment = (graph, departmentId, references) => {
+  const value = typeof graph === 'string' ? JSON.parse(graph) : graph
+  return {
+    ...value,
+    nodes:(value?.nodes || []).map(node => {
+      const data = node.data || {}
+      const storedId = Number(data.departmentId)
+      const resolvedId = storedId || references.byLabel.get(data.department) || references.byUniqueName.get(data.department)
+      if (Number(resolvedId) !== Number(departmentId)) return node
+      return { ...node, data:{ ...data, departmentId:'', department:'' } }
+    }),
+  }
+}
 const canViewTemplate = (user, template) => Boolean(template) && (
   user.is_system_admin || template.owner_id === user.id || template.visibility === 'public' ||
   template.visible_users.includes(user.id) || template.visible_departments.includes(user.department_id)
@@ -519,8 +532,29 @@ app.delete('/api/departments/:id', (req, res) => {
   const users = db.prepare('SELECT COUNT(*) total FROM users WHERE department_id=?').get(req.params.id).total
   if (children) return res.status(400).json({ message: '请先删除该部门下的子部门' })
   if (users) return res.status(400).json({ message: '该部门下还有用户，暂不能删除' })
-  db.prepare('DELETE FROM departments WHERE id=?').run(req.params.id)
-  res.json({ ok: true })
+  const references = departmentReferences(db.prepare('SELECT * FROM departments').all())
+  db.exec('BEGIN')
+  try {
+    const updateVersion = db.prepare('UPDATE template_versions SET graph=? WHERE id=?')
+    db.prepare('SELECT id, graph FROM template_versions').all().forEach(row => {
+      updateVersion.run(JSON.stringify(clearGraphDepartment(row.graph, department.id, references)), row.id)
+    })
+    const updateTemplate = db.prepare('UPDATE templates SET visible_departments=?, visibility=?, updated_at=CURRENT_TIMESTAMP WHERE id=?')
+    db.prepare('SELECT id, visibility, visible_departments, visible_users FROM templates').all().forEach(template => {
+      const departments = JSON.parse(template.visible_departments || '[]').map(Number).filter(id => id !== Number(department.id))
+      const visibleUsers = JSON.parse(template.visible_users || '[]')
+      let visibility = template.visibility
+      if (visibility === 'department' && !departments.length) visibility = 'private'
+      if (visibility === 'mixed') visibility = departments.length ? (visibleUsers.length ? 'mixed' : 'department') : (visibleUsers.length ? 'users' : 'private')
+      updateTemplate.run(JSON.stringify(departments), visibility, template.id)
+    })
+    db.prepare('DELETE FROM departments WHERE id=?').run(department.id)
+    db.exec('COMMIT')
+    res.json({ ok: true })
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
 })
 
 app.use((error, _req, res, _next) => {

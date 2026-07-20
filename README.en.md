@@ -13,6 +13,7 @@ Shunban is a lightweight system for sharing workflow knowledge and keeping step-
 - Vertical task execution view with undo, notes, and optional dates
 - Step records for departments, contacts, materials, notes, and multiple system links
 - Nested departments, department renaming synchronized to workflows and tasks, and tiered system/department administrator permissions
+- Department deletion clears template references while preserving department names in existing task snapshots
 - SQLite single-file storage with no external database service required
 - Responsive desktop and mobile layouts
 

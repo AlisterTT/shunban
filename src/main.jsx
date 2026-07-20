@@ -131,6 +131,7 @@ function LoginPage({ onLogin }) {
 }
 
 function InvitationRegistrationPage({ token }) {
+  const [mode, setMode] = useState('register')
   const [invitation, setInvitation] = useState(null)
   const [loading, setLoading] = useState(true)
   const [invalid, setInvalid] = useState('')
@@ -149,7 +150,9 @@ function InvitationRegistrationPage({ token }) {
   const submit = async event => {
     event.preventDefault(); setFieldError(null); setError(''); setSubmitting(true)
     try {
-      const result = await api(`/api/public/invitations/${encodeURIComponent(token)}/register`, { method:'POST', body:JSON.stringify(form) })
+      const result = mode === 'login'
+        ? await api('/api/auth/login', { method:'POST', body:JSON.stringify({ username:form.username, password:form.password, remember:form.remember }) })
+        : await api(`/api/public/invitations/${encodeURIComponent(token)}/register`, { method:'POST', body:JSON.stringify(form) })
       saveToken(result.token, result.remember)
       window.location.assign('/')
     } catch (err) {
@@ -160,6 +163,10 @@ function InvitationRegistrationPage({ token }) {
       setSubmitting(false)
     }
   }
+  const switchMode = nextMode => {
+    setMode(nextMode); setFieldError(null); setError('')
+    if (nextMode === 'login') window.setTimeout(() => usernameRef.current?.focus(), 0)
+  }
   return <main className="login-page invite-page">
     <section className="login-intro">
       <Brand />
@@ -168,15 +175,16 @@ function InvitationRegistrationPage({ token }) {
     </section>
     <section className="login-form-side">
       {loading ? <div className="invite-state"><span className="brand-mark"><Link2 size={21}/></span><b>正在检查邀请链接…</b></div> : invalid ? <div className="invite-state"><span className="brand-mark invalid"><X size={21}/></span><h2>邀请链接不可用</h2><p>{invalid}</p><button className="secondary" onClick={() => window.location.assign('/')}>返回登录</button></div> : <form className="login-form invite-form" onSubmit={submit}>
-        <div className="login-heading"><span className="eyebrow">{invitation.creatorName} 邀请你加入</span><h2>注册顺办账号</h2><p>请选择所属部门并设置登录信息。</p></div>
-        <Field label="姓名"><input autoFocus required value={form.name} onChange={event => { setForm({...form,name:event.target.value}); if (fieldError?.field === 'name') setFieldError(null) }} aria-invalid={fieldError?.field === 'name'}/>{fieldError?.field === 'name' && <small className="field-error">{fieldError.message}</small>}</Field>
+        <div className="login-heading"><span className="eyebrow">{invitation.creatorName} 邀请你加入</span><h2>{mode === 'register' ? '注册顺办账号' : '登录顺办'}</h2><p>{mode === 'register' ? '请选择所属部门并设置登录信息。' : '已有账号可以直接登录，无需重复注册。'}</p></div>
+        <div className="invite-auth-switch" aria-label="注册和登录切换"><button type="button" className={mode === 'register' ? 'active' : ''} onClick={() => switchMode('register')}>注册新账号</button><button type="button" className={mode === 'login' ? 'active' : ''} onClick={() => switchMode('login')}>已有账号登录</button></div>
+        {mode === 'register' && <Field label="姓名"><input autoFocus required value={form.name} onChange={event => { setForm({...form,name:event.target.value}); if (fieldError?.field === 'name') setFieldError(null) }} aria-invalid={fieldError?.field === 'name'}/>{fieldError?.field === 'name' && <small className="field-error">{fieldError.message}</small>}</Field>}
         <Field label="用户名"><input ref={usernameRef} required value={form.username} onChange={event => { setForm({...form,username:event.target.value}); if (fieldError?.field === 'username') setFieldError(null) }} autoComplete="username" aria-invalid={fieldError?.field === 'username'}/>{fieldError?.field === 'username' && <small className="field-error">{fieldError.message}</small>}</Field>
-        <Field label="密码"><div className="password-input"><input required minLength="6" type={showPassword?'text':'password'} value={form.password} onChange={event => { setForm({...form,password:event.target.value}); if (fieldError?.field === 'password') setFieldError(null) }} autoComplete="new-password" aria-invalid={fieldError?.field === 'password'}/><button type="button" aria-label={showPassword?'隐藏密码':'显示密码'} onClick={() => setShowPassword(!showPassword)}>{showPassword?<EyeOff size={17}/>:<Eye size={17}/>}</button></div>{fieldError?.field === 'password' && <small className="field-error">{fieldError.message}</small>}</Field>
-        <Field label="所属部门"><select required value={form.departmentId} onChange={event => { setForm({...form,departmentId:event.target.value}); if (fieldError?.field === 'departmentId') setFieldError(null) }}>{invitation.departments.map(department => <option key={department.id} value={department.id}>{department.label || department.name}</option>)}</select>{fieldError?.field === 'departmentId' && <small className="field-error">{fieldError.message}</small>}</Field>
+        <Field label="密码"><div className="password-input"><input required minLength="6" type={showPassword?'text':'password'} value={form.password} onChange={event => { setForm({...form,password:event.target.value}); if (fieldError?.field === 'password') setFieldError(null) }} autoComplete={mode === 'register' ? 'new-password' : 'current-password'} aria-invalid={fieldError?.field === 'password'}/><button type="button" aria-label={showPassword?'隐藏密码':'显示密码'} onClick={() => setShowPassword(!showPassword)}>{showPassword?<EyeOff size={17}/>:<Eye size={17}/>}</button></div>{fieldError?.field === 'password' && <small className="field-error">{fieldError.message}</small>}</Field>
+        {mode === 'register' && <Field label="所属部门"><select required value={form.departmentId} onChange={event => { setForm({...form,departmentId:event.target.value}); if (fieldError?.field === 'departmentId') setFieldError(null) }}>{invitation.departments.map(department => <option key={department.id} value={department.id}>{department.label || department.name}</option>)}</select>{fieldError?.field === 'departmentId' && <small className="field-error">{fieldError.message}</small>}</Field>}
         <label className="remember-row"><input type="checkbox" checked={form.remember} onChange={event => setForm({...form,remember:event.target.checked})}/><i/><span><b>保持登录状态</b><small>在这台设备上保留 30 天</small></span></label>
         {error && <p className="form-error">{error}</p>}
-        <button className="primary login-submit" disabled={submitting}>{submitting?'正在注册…':'注册并进入顺办'}<span>→</span></button>
-        <small className="invite-expiry">邀请有效至 {formatDateTime(invitation.expiresAt)}</small>
+        <button className="primary login-submit" disabled={submitting}>{submitting ? (mode === 'register' ? '正在注册…' : '正在登录…') : (mode === 'register' ? '注册并进入顺办' : '登录顺办')}<span>→</span></button>
+        {mode === 'register' && <small className="invite-expiry">邀请有效至 {formatDateTime(invitation.expiresAt)}</small>}
       </form>}
       <Copyright className="login-copyright" />
     </section>

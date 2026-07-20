@@ -332,8 +332,8 @@ function LibraryView({ data, openTemplate, newTemplate, startTask, reload, notif
 
 function Editor({ template, data, back, reload, notify, openCreated }) {
   const [meta, setMeta] = useState({ name: template.name, description: template.description, category: template.category, visibility: template.visibility, visibleDepartments: template.visible_departments || [], visibleUsers: template.visible_users || [] })
-  const [savedName, setSavedName] = useState(template.name)
   const [showSettings, setShowSettings] = useState(false)
+  const [settingsDraft, setSettingsDraft] = useState(null)
   const [publishOpen, setPublishOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [stepDeleteTarget, setStepDeleteTarget] = useState(null)
@@ -343,7 +343,6 @@ function Editor({ template, data, back, reload, notify, openCreated }) {
   const [relationTargetId, setRelationTargetId] = useState('')
   const [saving, setSaving] = useState(false)
   const [savingSettings, setSavingSettings] = useState(false)
-  const [savingName, setSavingName] = useState(false)
   const savingRef = useRef(false)
   const selected = nodes.find(n => n.id === selectedId)
   const selectedSystems = selected ? getSystems(selected.data) : []
@@ -394,8 +393,15 @@ function Editor({ template, data, back, reload, notify, openCreated }) {
     setEdges(list => [...list, { id:`e-${Date.now()}`, source:selected.id, target:targetId }])
     setRelationTargetId('')
   }
-  const normalizedSettings = (overrides = {}) => {
-    const current = { ...meta, ...overrides }
+  const openSettings = () => {
+    setSettingsDraft({ ...meta, visibleDepartments:[...meta.visibleDepartments], visibleUsers:[...meta.visibleUsers] })
+    setShowSettings(true)
+  }
+  const closeSettings = () => {
+    setShowSettings(false)
+    setSettingsDraft(null)
+  }
+  const normalizedSettings = (current = meta) => {
     return {
       name:current.name.trim(),
       description:current.description,
@@ -405,27 +411,12 @@ function Editor({ template, data, back, reload, notify, openCreated }) {
       visibleUsers:['users','mixed'].includes(current.visibility) ? current.visibleUsers : [],
     }
   }
-  const saveName = async () => {
-    if (!template.id || savingName) return
-    const settings = normalizedSettings()
-    if (!settings.name) { setMeta(current => ({ ...current, name:savedName })); return notify('流程名称不能为空') }
-    if (settings.name === savedName) return
-    setSavingName(true)
-    try {
-      await api(`/api/templates/${template.id}/settings`, { method:'PATCH', body:JSON.stringify(settings) })
-      await reload()
-      setSavedName(settings.name)
-      setMeta(current => ({ ...current, name:settings.name }))
-      notify(`流程名称已保存，仍为 V${template.current_version}`)
-    } catch (error) { notify(error.message) }
-    finally { setSavingName(false) }
-  }
   const saveSettings = async () => {
-    const settings = normalizedSettings()
+    const settings = normalizedSettings(settingsDraft || meta)
     if (!settings.name) return notify('请填写流程名称')
-    setMeta(current => ({ ...current, ...settings }))
     if (!template.id) {
-      setShowSettings(false)
+      setMeta(current => ({ ...current, ...settings }))
+      closeSettings()
       notify('流程设置已记录，创建流程时生效')
       return
     }
@@ -433,8 +424,8 @@ function Editor({ template, data, back, reload, notify, openCreated }) {
     try {
       await api(`/api/templates/${template.id}/settings`, { method:'PATCH', body:JSON.stringify(settings) })
       await reload()
-      setSavedName(settings.name)
-      setShowSettings(false)
+      setMeta(current => ({ ...current, ...settings }))
+      closeSettings()
       notify(`流程设置已保存，仍为 V${template.current_version}`)
     } catch (error) { notify(error.message) }
     finally { setSavingSettings(false) }
@@ -481,8 +472,8 @@ function Editor({ template, data, back, reload, notify, openCreated }) {
   return <section className="editor-page enter">
     <div className="editor-bar">
       <button className="icon-button" onClick={back}><ArrowLeft size={20}/></button>
-      <div className="editor-title"><input aria-label="流程名称" title="修改后按回车或移开光标即可保存" value={meta.name} onChange={e => setMeta({ ...meta, name: e.target.value })} onBlur={saveName} onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur() }}/><span>{template.id ? `${template.flow_code} · 当前 V${template.current_version} · ${savingName ? '正在保存名称…' : '改名不增加版本'}` : '新流程草稿 · 名称可修改'}</span></div>
-      <div className="editor-actions"><button className="secondary" onClick={() => setShowSettings(true)}><Share2 size={16}/><span className="hide-mobile">流程设置</span></button><button className="primary" onClick={() => template.id ? setPublishOpen(true) : save()} disabled={saving}>{saving ? '保存中…' : template.id ? '发布新版本' : '创建流程'}</button></div>
+      <div className="editor-title">{template.id ? <strong className="editor-name">{meta.name}</strong> : <input aria-label="流程名称" title="填写新流程名称" value={meta.name} onChange={e => setMeta({ ...meta, name: e.target.value })}/>}<span>{template.id ? `${template.flow_code} · 当前 V${template.current_version} · 名称在流程设置中修改` : '新流程草稿 · 创建后成为 V1'}</span></div>
+      <div className="editor-actions"><button className="secondary" onClick={openSettings}><Share2 size={16}/><span className="hide-mobile">流程设置</span></button><button className="primary" onClick={() => template.id ? setPublishOpen(true) : save()} disabled={saving}>{saving ? '保存中…' : template.id ? '发布新版本' : '创建流程'}</button></div>
     </div>
     <div className="editor-workspace">
       <div className="canvas-wrap">
@@ -509,15 +500,16 @@ function Editor({ template, data, back, reload, notify, openCreated }) {
         </> : <div className="inspector-empty"><GripVertical size={26}/><b>选择一个步骤</b><p>点击流程图中的节点，在这里编辑详细内容。</p></div>}
       </aside>
     </div>
-    {showSettings && <div className="modal-wrap"><div className="scrim" onClick={() => setShowSettings(false)}/><div className="modal settings-modal">
-      <div className="modal-head"><div><span className="eyebrow">模板信息</span><h2>流程设置与分享</h2></div><button className="icon-button" onClick={() => setShowSettings(false)}><X size={20}/></button></div>
-      <Field label="流程简介"><textarea value={meta.description} onChange={e => setMeta({...meta, description:e.target.value})} placeholder="简单说明这个流程解决什么问题"/></Field>
-      <Field label="流程分类"><input value={meta.category} onChange={e => setMeta({...meta, category:e.target.value})} placeholder="例如：合同管理"/></Field>
-      <Field label="谁可以看到"><select value={meta.visibility} onChange={e => setMeta({...meta, visibility:e.target.value})}><option value="private">仅自己</option><option value="department">指定部门</option><option value="users">指定用户</option><option value="mixed">指定部门和用户</option><option value="public">全体用户</option></select></Field>
-      {(meta.visibility === 'department' || meta.visibility === 'mixed') && <ChoiceGroup label="选择部门" items={data.departments} selected={meta.visibleDepartments} onChange={visibleDepartments => setMeta({...meta, visibleDepartments})}/>} 
-      {(meta.visibility === 'users' || meta.visibility === 'mixed') && <GroupedUserChoice departments={data.departments} users={data.users} selected={meta.visibleUsers} onChange={visibleUsers => setMeta({...meta, visibleUsers})}/>} 
+    {showSettings && settingsDraft && <div className="modal-wrap"><div className="scrim" onClick={closeSettings}/><div className="modal settings-modal">
+      <div className="modal-head"><div><span className="eyebrow">模板信息</span><h2>流程设置与分享</h2></div><button className="icon-button" onClick={closeSettings}><X size={20}/></button></div>
+      <Field label="流程名称"><input value={settingsDraft.name} onChange={e => setSettingsDraft({...settingsDraft, name:e.target.value})} placeholder="填写流程名称"/></Field>
+      <Field label="流程简介"><textarea value={settingsDraft.description} onChange={e => setSettingsDraft({...settingsDraft, description:e.target.value})} placeholder="简单说明这个流程解决什么问题"/></Field>
+      <Field label="流程分类"><input value={settingsDraft.category} onChange={e => setSettingsDraft({...settingsDraft, category:e.target.value})} placeholder="例如：合同管理"/></Field>
+      <Field label="谁可以看到"><select value={settingsDraft.visibility} onChange={e => setSettingsDraft({...settingsDraft, visibility:e.target.value})}><option value="private">仅自己</option><option value="department">指定部门</option><option value="users">指定用户</option><option value="mixed">指定部门和用户</option><option value="public">全体用户</option></select></Field>
+      {(settingsDraft.visibility === 'department' || settingsDraft.visibility === 'mixed') && <ChoiceGroup label="选择部门" items={data.departments} selected={settingsDraft.visibleDepartments} onChange={visibleDepartments => setSettingsDraft({...settingsDraft, visibleDepartments})}/>}
+      {(settingsDraft.visibility === 'users' || settingsDraft.visibility === 'mixed') && <GroupedUserChoice departments={data.departments} users={data.users} selected={settingsDraft.visibleUsers} onChange={visibleUsers => setSettingsDraft({...settingsDraft, visibleUsers})}/>}
       <button className="primary full" onClick={saveSettings} disabled={savingSettings}>{savingSettings ? '正在保存…' : template.id ? '保存设置' : '确认设置'}</button>
-      {template.id && <div className="flow-danger-zone"><div><b>删除流程</b><span>已有待办保留，但流程将从流程库移除。</span></div><button onClick={() => { setShowSettings(false); setDeleteOpen(true) }}>删除</button></div>}
+      {template.id && <div className="flow-danger-zone"><div><b>删除流程</b><span>已有待办保留，但流程将从流程库移除。</span></div><button onClick={() => { closeSettings(); setDeleteOpen(true) }}>删除</button></div>}
     </div></div>}
     {publishOpen && <div className="modal-wrap"><div className="scrim" onClick={() => setPublishOpen(false)}/><div className="modal confirm-modal"><div className="confirm-icon"><UploadCloud size={23}/></div><div className="modal-head"><div><span className="eyebrow">确认发布</span><h2>发布为 V{template.current_version + 1}？</h2></div><button className="icon-button" onClick={() => setPublishOpen(false)}><X size={20}/></button></div><p className="modal-intro">流程编号仍为 {template.flow_code}。新建待办将使用这个版本，已经创建的待办不会变化。</p><div className="publish-summary"><span>流程名称</span><b>{meta.name || '未命名流程'}</b><small>当前 V{template.current_version} → 新版本 V{template.current_version + 1}</small></div><div className="modal-actions"><button className="ghost" onClick={() => setPublishOpen(false)}>再检查一下</button><button className="primary" onClick={save} disabled={saving}>{saving ? '正在发布…' : '确认发布'}</button></div></div></div>}
     {stepDeleteTarget && <div className="modal-wrap"><div className="scrim" onClick={() => setStepDeleteTarget(null)}/><div className="modal confirm-modal danger-confirm"><div className="confirm-icon"><Trash2 size={23}/></div><div className="modal-head"><div><span className="eyebrow">删除步骤</span><h2>确定删除“{stepDeleteTarget.data.title}”？</h2></div><button className="icon-button" onClick={() => setStepDeleteTarget(null)}><X size={20}/></button></div><p className="modal-intro">与这个步骤相连的 {edges.filter(edge => edge.source === stepDeleteTarget.id || edge.target === stepDeleteTarget.id).length} 条关系也会一并删除，此操作将在发布后生效。</p><div className="modal-actions"><button className="ghost" onClick={() => setStepDeleteTarget(null)}>取消</button><button className="danger-button" onClick={() => { removeSelected(stepDeleteTarget.id); setStepDeleteTarget(null) }}>确认删除步骤</button></div></div></div>}

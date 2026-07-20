@@ -279,19 +279,29 @@ function Editor({ template, data, back, reload, notify }) {
   const [nodes, setNodes, onNodesChange] = useNodesState(template.graph.nodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState(template.graph.edges)
   const [selectedId, setSelectedId] = useState(nodes[0]?.id || null)
+  const [relationTargetId, setRelationTargetId] = useState('')
   const [saving, setSaving] = useState(false)
   const selected = nodes.find(n => n.id === selectedId)
   const selectedSystems = selected ? getSystems(selected.data) : []
+  const incomingEdges = selected ? edges.filter(edge => edge.target === selected.id) : []
+  const outgoingEdges = selected ? edges.filter(edge => edge.source === selected.id) : []
+  const availableRelationTargets = selected ? nodes.filter(node => node.id !== selected.id && !outgoingEdges.some(edge => edge.target === node.id)) : []
   const departmentChoices = departmentOptions(data.departments)
   const selectedDepartmentId = selected ? (selected.data.departmentId || departmentChoices.find(department => department.label === selected.data.department || department.name === selected.data.department)?.id || '') : ''
-  const connect = useCallback(params => setEdges(eds => addEdge({ ...params, id: `e-${Date.now()}` }, eds)), [setEdges])
+  const connect = useCallback(params => {
+    if (params.source === params.target || edges.some(edge => edge.source === params.source && edge.target === params.target)) return notify('这条步骤关系已经存在或无效')
+    if (createsRelationCycle(edges, params.source, params.target)) return notify('不能添加形成循环的步骤关系')
+    setEdges(list => addEdge({ ...params, id: `e-${Date.now()}` }, list))
+  }, [edges, setEdges, notify])
   const updateSelected = (key, value) => setNodes(list => list.map(n => n.id === selectedId ? { ...n, data: { ...n.data, [key]: value } } : n))
+  useEffect(() => setRelationTargetId(''), [selectedId])
   const addNode = () => {
     const id = `n-${Date.now()}`
     const x = selected ? selected.position.x + 320 : 120
-    const y = selected ? selected.position.y : 140
+    const siblingCount = selected ? edges.filter(edge => edge.source === selected.id).length : 0
+    const y = selected ? selected.position.y + (siblingCount ? siblingCount * 170 : 0) : 140
     setNodes(list => [...list, { id, type: 'step', position: { x, y }, data: blankStep() }])
-    if (selected) setEdges(list => [...list, { id: `e-${Date.now()}`, source: selected.id, target: id }])
+    if (selected) setEdges(list => [...list, { id: `e-${Date.now()}`, source:selected.id, target:id }])
     setSelectedId(id)
   }
   const insertBefore = nodeData => {
@@ -310,6 +320,15 @@ function Editor({ template, data, back, reload, notify }) {
     setNodes(list => list.filter(n => n.id !== selectedId))
     setEdges(list => list.filter(e => e.source !== selectedId && e.target !== selectedId))
     setSelectedId(null)
+  }
+  const removeSelectedEdges = () => setEdges(list => list.filter(edge => !edge.selected))
+  const removeEdge = edgeId => setEdges(list => list.filter(edge => edge.id !== edgeId))
+  const addRelation = () => {
+    if (!selected || !relationTargetId) return
+    const targetId = relationTargetId
+    if (createsRelationCycle(edges, selected.id, targetId)) return notify('不能添加形成循环的步骤关系')
+    setEdges(list => [...list, { id:`e-${Date.now()}`, source:selected.id, target:targetId }])
+    setRelationTargetId('')
   }
   const save = async () => {
     if (!meta.name.trim()) return notify('请填写流程名称')
@@ -333,8 +352,8 @@ function Editor({ template, data, back, reload, notify }) {
     </div>
     <div className="editor-workspace">
       <div className="canvas-wrap">
-        <div className="canvas-toolbar"><div className="tool-group"><button onClick={addPrevious}><ArrowLeft size={16}/>上一步</button><button onClick={addNode}><Plus size={16}/>下一步</button></div></div>
-        <ReactFlow nodes={decorated} edges={edges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onConnect={connect} nodeTypes={nodeTypes} defaultEdgeOptions={defaultEdgeOptions} onNodeClick={(_, node) => setSelectedId(node.id)} fitView fitViewOptions={{ padding: .25 }} minZoom={.35}>
+        <div className="canvas-toolbar"><div className="tool-group"><button onClick={addPrevious}><ArrowLeft size={16}/>上一步</button><button onClick={addNode}><Plus size={16}/>下一步</button></div>{edges.some(edge => edge.selected) && <><i/><button className="delete-edge-tool" onClick={removeSelectedEdges}><Trash2 size={15}/>删除连线</button></>}</div>
+        <ReactFlow nodes={decorated} edges={edges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onConnect={connect} nodeTypes={nodeTypes} defaultEdgeOptions={defaultEdgeOptions} deleteKeyCode={['Backspace','Delete']} onNodeClick={(_, node) => setSelectedId(node.id)} fitView fitViewOptions={{ padding: .25 }} minZoom={.35}>
           <Background color="#d8ddd8" gap={22} size={1}/><Controls showInteractive={false}/><MiniMap pannable zoomable nodeColor="#dbe8df" maskColor="rgba(244,245,241,.75)"/>
         </ReactFlow>
         {!nodes.length && <button className="canvas-empty" onClick={addNode}><span><Plus size={24}/></span><b>添加第一个步骤</b><small>从这里开始梳理办理顺序</small></button>}
@@ -349,6 +368,7 @@ function Editor({ template, data, back, reload, notify }) {
             <Field label="所需材料（仅文字记录）"><textarea value={selected.data.materials} onChange={e => updateSelected('materials', e.target.value)} placeholder="例如：合同原件两份、审批单"/></Field>
             <div className="systems-editor"><div className="systems-head"><span>使用系统</span><button type="button" onClick={() => updateSelected('systems',[...selectedSystems,{name:'',url:''}])}><Plus size={14}/>添加系统</button></div>{selectedSystems.map((system,index) => <div className="system-row" key={index}><input value={system.name} onChange={e => updateSelected('systems',selectedSystems.map((item,i)=>i===index?{...item,name:e.target.value}:item))} placeholder="系统名称"/><input value={system.url} onChange={e => updateSelected('systems',selectedSystems.map((item,i)=>i===index?{...item,url:e.target.value}:item))} placeholder="系统地址 http://"/><button type="button" aria-label={`删除第${index + 1}个系统`} onClick={() => updateSelected('systems',selectedSystems.filter((_,i)=>i!==index))}><X size={15}/></button></div>)}{!selectedSystems.length && <p>暂未指定系统，可按需要添加多个。</p>}</div>
             <Field label="注意事项"><textarea value={selected.data.note} onChange={e => updateSelected('note', e.target.value)} placeholder="容易忘记的细节"/></Field>
+            <div className="relation-editor"><div className="relation-head"><b>步骤关系</b><span>管理当前步骤与其他步骤的连线</span></div><RelationGroup label="前置步骤" edges={incomingEdges} nodes={nodes} endpoint="source" remove={removeEdge}/><RelationGroup label="后续步骤" edges={outgoingEdges} nodes={nodes} endpoint="target" remove={removeEdge}/><div className="relation-add"><select aria-label="选择后续步骤" value={relationTargetId} onChange={event => setRelationTargetId(event.target.value)}><option value="">选择后续步骤</option>{availableRelationTargets.map(node => <option value={node.id} key={node.id}>{node.data.title}</option>)}</select><button type="button" onClick={addRelation} disabled={!relationTargetId}><Plus size={14}/>连接</button></div></div>
             <label className="switch-row"><div><b>允许跳过</b><span>实际办理时可以略过此步骤</span></div><input type="checkbox" checked={selected.data.optional} onChange={e => updateSelected('optional', e.target.checked)}/><i/></label>
             <button className="danger-link" onClick={removeSelected}>删除这个步骤</button>
           </div>
@@ -429,6 +449,8 @@ function TaskView({ initialTask, back, reload, notify }) {
   const graphNodes = task.graph_snapshot.nodes.map(n => ({ ...n, data: { ...n.data, status: task.progress[n.id] || '' }, draggable: false }))
   const stages = buildFlowStages(graphNodes, edges)
   const orderedNodes = stages.flat()
+  const nodeStageIndexes = new Map()
+  stages.forEach((stage, index) => stage.forEach(node => nodeStageIndexes.set(node.id, index)))
   const done = Object.values(task.progress).filter(v => v === 'done' || v === 'skipped').length
   return <section className="task-page enter">
     <div className="task-head">
@@ -444,9 +466,11 @@ function TaskView({ initialTask, back, reload, notify }) {
           <div className="stage-index"><span>{String(stageIndex + 1).padStart(2,'0')}</span><i/></div>
           <div className="stage-content">{stage.length > 1 && <div className="parallel-label"><GitBranch size={13}/>以下 {stage.length} 项可并行办理</div>}<div className={`stage-steps ${stage.length > 1 ? 'parallel' : ''}`}>{stage.map(node => {
             const status = task.progress[node.id] || 'waiting'
+            const predecessors = edges.filter(edge => edge.target === node.id).map(edge => graphNodes.find(item => item.id === edge.source)).filter(Boolean)
+            const crossStagePredecessors = predecessors.filter(item => (nodeStageIndexes.get(item.id) ?? stageIndex - 1) < stageIndex - 1)
             return <button key={node.id} className={`vertical-step ${status} ${selectedId === node.id ? 'selected' : ''}`} onClick={() => { setSelectedId(node.id); setNote(task.notes[node.id] || ''); setTime(task.times?.[node.id] || '') }}>
               <span className="vertical-status">{status === 'done' ? <Check size={15}/> : status === 'skipped' ? '—' : status === 'current' ? <span/> : <LockKeyhole size={13}/>}</span>
-              <div><b>{node.data.title}</b><small>{[node.data.department,node.data.contact,task.times?.[node.id] ? formatTaskTime(task.times[node.id]) : ''].filter(Boolean).join(' · ') || '未填写办理信息'}</small></div>
+              <div><b>{node.data.title}</b><small>{[node.data.department,node.data.contact,task.times?.[node.id] ? formatTaskTime(task.times[node.id]) : ''].filter(Boolean).join(' · ') || '未填写办理信息'}</small>{predecessors.length > 1 && <small className="vertical-relation-line"><GitBranch size={11}/>前置：{predecessors.map(item => item.data.title).join('、')}</small>}{crossStagePredecessors.length > 0 && <small className="vertical-relation-line cross-stage"><Network size={11}/>跨阶段连线：{crossStagePredecessors.map(item => item.data.title).join('、')} → 本步</small>}</div>
               <ChevronRight size={17}/>
             </button>
           })}</div></div>
@@ -546,6 +570,23 @@ function DepartmentRow({ node, depth, rootId, add, edit, remove, users }) {
   const userCount = users.filter(user => user.department_id === node.id).length
   const isManagedRoot = Number(node.id) === Number(rootId)
   return <><div className="department-row" style={{ '--depth': depth }}><span className="tree-guide"/><span className="department-icon"><Building2 size={17}/></span><div><b>{node.name}</b><small>{isManagedRoot ? '当前管理范围' : userCount ? `${userCount} 名用户` : '暂无用户'}</small></div><div className="department-actions"><button className="ghost tiny" aria-label={`在${node.name}下添加子部门`} onClick={() => add(node)}><Plus size={14}/><span>添加子部门</span></button>{!isManagedRoot && <button className="edit-button" aria-label={`修改${node.name}名称`} onClick={() => edit(node)}><Pencil size={15}/></button>}{!isManagedRoot && <button className="delete-button" aria-label={`删除${node.name}`} onClick={() => remove(node)}><Trash2 size={15}/></button>}</div></div>{node.children.map(child => <DepartmentRow key={child.id} node={child} depth={depth + 1} rootId={rootId} add={add} edit={edit} remove={remove} users={users}/>)}</>
+}
+
+function RelationGroup({ label, edges, nodes, endpoint, remove }) {
+  return <div className="relation-group"><span>{label}</span><div>{edges.map(edge => { const node = nodes.find(item => item.id === edge[endpoint]); return <span className="relation-chip" key={edge.id}><b>{node?.data.title || '未知步骤'}</b><button type="button" aria-label={`删除与${node?.data.title || '未知步骤'}的关系`} onClick={() => remove(edge.id)}><X size={13}/></button></span> })}{!edges.length && <small>暂无</small>}</div></div>
+}
+
+function createsRelationCycle(edges, sourceId, targetId) {
+  const queue = [targetId]
+  const visited = new Set()
+  while (queue.length) {
+    const current = queue.shift()
+    if (current === sourceId) return true
+    if (visited.has(current)) continue
+    visited.add(current)
+    edges.filter(edge => edge.source === current).forEach(edge => queue.push(edge.target))
+  }
+  return false
 }
 
 function SearchModal({ data, close, openTask, openTemplate }) {

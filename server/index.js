@@ -421,6 +421,27 @@ app.post('/api/users/:id/reset-password', (req, res) => {
   res.json({ password })
 })
 
+app.patch('/api/users/:id/settings', (req, res) => {
+  if (!canManageUsers(req.user)) return res.status(403).json({ message: '没有用户管理权限' })
+  const target = db.prepare('SELECT * FROM users WHERE id=?').get(req.params.id)
+  if (!target) return res.status(404).json({ message: '用户不存在' })
+  if (target.is_system_admin) return res.status(400).json({ message: '系统管理员账号不能修改' })
+  const departmentId = Number(req.body.departmentId)
+  if (!departmentId || !db.prepare('SELECT id FROM departments WHERE id=?').get(departmentId)) return res.status(400).json({ message: '请选择有效的所属部门' })
+  if (!req.user.is_system_admin) {
+    if (target.role !== 'user' || !inDepartmentScope(req.user, target.department_id)) return res.status(403).json({ message: '部门管理员只能设置管理范围内的普通用户' })
+    if (!inDepartmentScope(req.user, departmentId)) return res.status(403).json({ message: '只能调入本部门及下级部门' })
+    if (req.body.role && req.body.role !== 'user') return res.status(403).json({ message: '只有系统管理员可以修改角色' })
+    db.prepare('UPDATE users SET department_id=? WHERE id=?').run(departmentId, target.id)
+    return res.json({ ok: true })
+  }
+  const role = req.body.role === 'department_admin' ? 'department_admin' : req.body.role === 'user' ? 'user' : null
+  if (!role) return res.status(400).json({ message: '角色类型不正确' })
+  db.prepare('UPDATE users SET department_id=?, role=? WHERE id=?').run(departmentId, role, target.id)
+  if (role !== target.role) db.prepare('DELETE FROM sessions WHERE user_id=?').run(target.id)
+  res.json({ ok: true })
+})
+
 app.patch('/api/users/:id/department', (req, res) => {
   if (!canManageUsers(req.user)) return res.status(403).json({ message: '没有用户管理权限' })
   const target = db.prepare('SELECT * FROM users WHERE id=?').get(req.params.id)

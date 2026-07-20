@@ -45,6 +45,14 @@ try {
   const privateFlow = await request('/api/templates', { token:adminToken, method:'POST', body:{ name:'权限测试流程', visibility:'private', graph:{ nodes:[], edges:[] } } })
   expectStatus(privateFlow, 200, '创建私有流程')
   const flowId = privateFlow.data.id
+  const flowSettings = await request(`/api/templates/${flowId}/settings`, { token:adminToken, method:'PATCH', body:{ description:'设置直接保存测试', category:'测试分类', visibility:'public' } })
+  expectStatus(flowSettings, 200, '直接保存流程设置')
+  if (flowSettings.data.version !== 1) throw new Error('保存流程设置不应生成新版本')
+  const flowAfterSettings = await request(`/api/templates/${flowId}`, { token:adminToken })
+  if (flowAfterSettings.data.current_version !== 1 || flowAfterSettings.data.description !== '设置直接保存测试' || flowAfterSettings.data.category !== '测试分类' || flowAfterSettings.data.visibility !== 'public') throw new Error('流程设置未直接生效')
+  const privateSettings = await request(`/api/templates/${flowId}/settings`, { token:adminToken, method:'PATCH', body:{ description:'设置直接保存测试', category:'测试分类', visibility:'private' } })
+  expectStatus(privateSettings, 200, '恢复私有分享设置')
+  if (privateSettings.data.version !== 1) throw new Error('修改分享设置不应生成新版本')
 
   const departmentFlow = await request('/api/templates', { token:adminToken, method:'POST', body:{
     name:'部门改名测试流程', visibility:'private', graph:{ nodes:[{ id:'dept-step', type:'step', position:{ x:0, y:0 }, data:{ title:'联系综合部', departmentId:1, department:'综合部' } }], edges:[] },
@@ -64,6 +72,8 @@ try {
   expectStatus(createAdmin, 200, '系统管理员创建部门管理员')
   const departmentAdminToken = await login('smokedeptadmin')
   const userToken = await login('wangwei')
+
+  expectStatus(await request(`/api/templates/${flowId}/settings`, { token:userToken, method:'PATCH', body:{ category:'越权修改' } }), 403, '普通用户修改他人流程设置')
 
   expectStatus(await request(`/api/templates/${flowId}`, { token:userToken }), 403, '普通用户读取私有流程')
   expectStatus(await request(`/api/templates/${flowId}/clone`, { token:userToken, method:'POST', body:{ name:'越权克隆' } }), 403, '普通用户克隆私有流程')

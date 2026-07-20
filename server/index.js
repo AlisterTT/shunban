@@ -340,6 +340,24 @@ app.post('/api/templates', (req, res) => {
   res.json({ id: Number(result.lastInsertRowid), version: 1 })
 })
 
+app.patch('/api/templates/:id/settings', (req, res) => {
+  const current = db.prepare('SELECT * FROM templates WHERE id=? AND deleted_at IS NULL').get(req.params.id)
+  if (!current) return res.status(404).json({ message: '流程不存在' })
+  if (current.owner_id !== req.user.id) return res.status(403).json({ message: '只能设置自己创建的流程' })
+  const visibility = ['private','department','users','mixed','public'].includes(req.body.visibility) ? req.body.visibility : current.visibility
+  const visibleDepartments = ['department','mixed'].includes(visibility) && Array.isArray(req.body.visibleDepartments) ? req.body.visibleDepartments : []
+  const visibleUsers = ['users','mixed'].includes(visibility) && Array.isArray(req.body.visibleUsers) ? req.body.visibleUsers : []
+  db.prepare(`UPDATE templates SET description=?, category=?, visibility=?, visible_departments=?, visible_users=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`).run(
+    String(req.body.description ?? current.description),
+    String(req.body.category ?? current.category),
+    visibility,
+    JSON.stringify(visibleDepartments),
+    JSON.stringify(visibleUsers),
+    req.params.id
+  )
+  res.json({ id:Number(req.params.id), version:current.current_version })
+})
+
 app.put('/api/templates/:id', (req, res) => {
   const current = db.prepare('SELECT * FROM templates WHERE id=? AND deleted_at IS NULL').get(req.params.id)
   if (!current) return res.status(404).json({ message: '流程不存在' })

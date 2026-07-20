@@ -341,6 +341,7 @@ function Editor({ template, data, back, reload, notify, openCreated }) {
   const [selectedId, setSelectedId] = useState(nodes[0]?.id || null)
   const [relationTargetId, setRelationTargetId] = useState('')
   const [saving, setSaving] = useState(false)
+  const [savingSettings, setSavingSettings] = useState(false)
   const savingRef = useRef(false)
   const selected = nodes.find(n => n.id === selectedId)
   const selectedSystems = selected ? getSystems(selected.data) : []
@@ -390,6 +391,29 @@ function Editor({ template, data, back, reload, notify, openCreated }) {
     if (createsRelationCycle(edges, selected.id, targetId)) return notify('不能添加形成循环的步骤关系')
     setEdges(list => [...list, { id:`e-${Date.now()}`, source:selected.id, target:targetId }])
     setRelationTargetId('')
+  }
+  const saveSettings = async () => {
+    const settings = {
+      description:meta.description,
+      category:meta.category,
+      visibility:meta.visibility,
+      visibleDepartments:['department','mixed'].includes(meta.visibility) ? meta.visibleDepartments : [],
+      visibleUsers:['users','mixed'].includes(meta.visibility) ? meta.visibleUsers : [],
+    }
+    setMeta(current => ({ ...current, ...settings }))
+    if (!template.id) {
+      setShowSettings(false)
+      notify('流程设置已记录，创建流程时生效')
+      return
+    }
+    setSavingSettings(true)
+    try {
+      await api(`/api/templates/${template.id}/settings`, { method:'PATCH', body:JSON.stringify(settings) })
+      await reload()
+      setShowSettings(false)
+      notify(`流程设置已保存，仍为 V${template.current_version}`)
+    } catch (error) { notify(error.message) }
+    finally { setSavingSettings(false) }
   }
   const save = async () => {
     if (savingRef.current) return
@@ -468,7 +492,7 @@ function Editor({ template, data, back, reload, notify, openCreated }) {
       <Field label="谁可以看到"><select value={meta.visibility} onChange={e => setMeta({...meta, visibility:e.target.value})}><option value="private">仅自己</option><option value="department">指定部门</option><option value="users">指定用户</option><option value="mixed">指定部门和用户</option><option value="public">全体用户</option></select></Field>
       {(meta.visibility === 'department' || meta.visibility === 'mixed') && <ChoiceGroup label="选择部门" items={data.departments} selected={meta.visibleDepartments} onChange={visibleDepartments => setMeta({...meta, visibleDepartments})}/>} 
       {(meta.visibility === 'users' || meta.visibility === 'mixed') && <GroupedUserChoice departments={data.departments} users={data.users} selected={meta.visibleUsers} onChange={visibleUsers => setMeta({...meta, visibleUsers})}/>} 
-      <button className="primary full" onClick={() => setShowSettings(false)}>确认设置</button>
+      <button className="primary full" onClick={saveSettings} disabled={savingSettings}>{savingSettings ? '正在保存…' : template.id ? '保存设置' : '确认设置'}</button>
       {template.id && <div className="flow-danger-zone"><div><b>删除流程</b><span>已有待办保留，但流程将从流程库移除。</span></div><button onClick={() => { setShowSettings(false); setDeleteOpen(true) }}>删除</button></div>}
     </div></div>}
     {publishOpen && <div className="modal-wrap"><div className="scrim" onClick={() => setPublishOpen(false)}/><div className="modal confirm-modal"><div className="confirm-icon"><UploadCloud size={23}/></div><div className="modal-head"><div><span className="eyebrow">确认发布</span><h2>发布为 V{template.current_version + 1}？</h2></div><button className="icon-button" onClick={() => setPublishOpen(false)}><X size={20}/></button></div><p className="modal-intro">流程编号仍为 {template.flow_code}。新建待办将使用这个版本，已经创建的待办不会变化。</p><div className="publish-summary"><span>流程名称</span><b>{meta.name || '未命名流程'}</b><small>当前 V{template.current_version} → 新版本 V{template.current_version + 1}</small></div><div className="modal-actions"><button className="ghost" onClick={() => setPublishOpen(false)}>再检查一下</button><button className="primary" onClick={save} disabled={saving}>{saving ? '正在发布…' : '确认发布'}</button></div></div></div>}

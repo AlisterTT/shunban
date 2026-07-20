@@ -7,7 +7,7 @@ import {
 import '@xyflow/react/dist/style.css'
 import {
   Archive, ArrowLeft, Building2, Check, CheckCircle2, ChevronDown, ChevronRight,
-  CircleUserRound, Clock3, Copy, Database, ExternalLink, FileText,
+  CircleUserRound, Clock3, Copy, Database, Download, ExternalLink, FileText,
   Eye, EyeOff, FolderTree, GitBranch, GripVertical, Home, KeyRound, ListTodo, LockKeyhole, LogOut,
   Menu, MoreHorizontal, Network, Pencil, Plus, RotateCcw, Search,
   Settings, Share2, Sparkles, Trash2, UploadCloud, UserRound, Users, X
@@ -38,6 +38,45 @@ const blankStep = () => ({
 
 const getSystems = data => Array.isArray(data.systems) ? data.systems : (data.system || data.systemUrl ? [{ name:data.system || '', url:data.systemUrl || '' }] : [])
 const safeSystemUrl = value => { try { const url = new URL(value); return ['http:','https:'].includes(url.protocol) ? url.href : '' } catch { return '' } }
+const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[char])
+const exportField = (label, value, className = '') => value ? `<div class="detail ${className}"><span>${escapeHtml(label)}</span><p>${escapeHtml(value)}</p></div>` : ''
+
+function createPrintableFlow(template) {
+  const nodes = template.graph?.nodes || []
+  const edges = template.graph?.edges || []
+  const stages = buildFlowStages(nodes, edges)
+  const ordered = stages.flat()
+  const sequence = new Map(ordered.map((node, index) => [node.id, index + 1]))
+  const nodeNames = new Map(nodes.map(node => [node.id, node.data.title || '未命名步骤']))
+  const relationText = (node, direction) => edges
+    .filter(edge => direction === 'incoming' ? edge.target === node.id : edge.source === node.id)
+    .map(edge => direction === 'incoming' ? edge.source : edge.target)
+    .filter(id => nodeNames.has(id))
+    .map(id => `${sequence.get(id) || '—'}. ${nodeNames.get(id)}`)
+    .join('、')
+  const overview = stages.length ? stages.map((stage, index) => `<div class="overview-row"><span>阶段 ${index + 1}</span><div>${stage.map(node => `<b>${sequence.get(node.id)}. ${escapeHtml(node.data.title || '未命名步骤')}</b>`).join(stage.length > 1 ? '<i>并列</i>' : '')}</div></div>`).join('') : '<p class="empty-export">这个流程还没有步骤。</p>'
+  const details = stages.map((stage, stageIndex) => `<section class="stage">
+    <header><span>阶段 ${stageIndex + 1}</span><small>${stage.length > 1 ? `${stage.length} 个并列步骤` : '顺序步骤'}</small></header>
+    ${stage.map(node => {
+      const step = node.data || {}
+      const systems = getSystems(step).filter(system => system.name || system.url)
+      const incoming = relationText(node, 'incoming')
+      const outgoing = relationText(node, 'outgoing')
+      return `<article class="step">
+        <div class="step-heading"><strong>${sequence.get(node.id)}</strong><div><h2>${escapeHtml(step.title || '未命名步骤')}</h2><p>${escapeHtml(step.department || '未指定部门')}${step.contact ? ` · 联系人：${escapeHtml(step.contact)}` : ''}</p></div>${step.optional ? '<em>可跳过</em>' : ''}</div>
+        ${exportField('要办理的事情', step.action, 'primary-detail')}
+        ${exportField('所需材料', step.materials)}
+        ${systems.length ? `<div class="detail"><span>使用系统</span><div class="systems">${systems.map(system => { const url = safeSystemUrl(system.url); return `<div><b>${escapeHtml(system.name || '未命名系统')}</b>${url ? `<a href="${escapeHtml(url)}">${escapeHtml(system.url)}</a>` : system.url ? `<small>${escapeHtml(system.url)}</small>` : ''}</div>` }).join('')}</div></div>` : ''}
+        ${exportField('注意事项', step.note)}
+        ${(incoming || outgoing) ? `<div class="relations">${incoming ? `<span><b>前置</b>${escapeHtml(incoming)}</span>` : ''}${outgoing ? `<span><b>后续</b>${escapeHtml(outgoing)}</span>` : ''}</div>` : ''}
+      </article>`
+    }).join('')}
+  </section>`).join('')
+  const exportedAt = new Date().toLocaleString('zh-CN', { hour12:false })
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(template.name)} · 流程手册</title><style>
+    :root{--ink:#29272c;--muted:#77737b;--accent:#5f608c;--soft:#efedf4;--line:#ddd9d2;--paper:#fbfaf7}*{box-sizing:border-box}body{margin:0;background:#e8e5df;color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;line-height:1.65}.print-bar{position:sticky;top:0;z-index:3;height:54px;padding:0 24px;background:rgba(41,39,44,.94);color:#fff;display:flex;align-items:center;justify-content:space-between;font-size:13px}.print-bar button{border:0;border-radius:8px;background:#7778a3;color:#fff;padding:8px 16px;font:inherit;cursor:pointer}.paper{width:min(860px,calc(100% - 32px));margin:30px auto;background:var(--paper);box-shadow:0 20px 55px rgba(42,39,34,.14)}.cover{padding:64px 70px 48px;border-bottom:1px solid var(--line)}.brand{font-size:11px;letter-spacing:.18em;color:var(--accent);font-weight:700}.cover h1{font-size:38px;line-height:1.2;letter-spacing:-.035em;margin:22px 0 14px}.cover>p{max-width:620px;color:#68646b;margin:0;white-space:pre-wrap}.meta{display:flex;flex-wrap:wrap;gap:9px 22px;margin-top:35px;padding-top:20px;border-top:1px solid var(--line);font-size:12px;color:var(--muted)}.meta b{color:var(--ink);margin-left:5px}.content{padding:42px 70px 64px}.section-title{font-size:11px;letter-spacing:.12em;color:var(--accent);margin-bottom:13px;font-weight:700}.overview{margin-bottom:44px;border-top:1px solid var(--line)}.overview-row{display:grid;grid-template-columns:84px 1fr;gap:15px;padding:14px 0;border-bottom:1px solid var(--line);align-items:start}.overview-row>span{font-size:11px;color:var(--muted)}.overview-row>div{display:flex;align-items:center;flex-wrap:wrap;gap:8px}.overview-row b{font-size:13px}.overview-row i{font-style:normal;font-size:9px;color:var(--accent);border:1px solid #ccc9dc;border-radius:10px;padding:1px 6px}.stage{margin-top:35px}.stage>header{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:11px;padding-bottom:8px;border-bottom:2px solid var(--accent)}.stage>header span{font-size:15px;font-weight:700}.stage>header small{color:var(--muted)}.step{padding:23px 25px;margin:0 0 14px;border:1px solid var(--line);background:#fff;break-inside:avoid;page-break-inside:avoid}.step-heading{display:flex;align-items:flex-start;gap:13px;margin-bottom:18px}.step-heading>strong{width:31px;height:31px;flex:none;border-radius:50%;background:var(--accent);color:#fff;display:grid;place-items:center}.step-heading>div{flex:1}.step-heading h2{font-size:18px;line-height:1.35;margin:2px 0}.step-heading p{font-size:11px;color:var(--muted);margin:3px 0 0}.step-heading em{font-size:10px;font-style:normal;color:var(--accent);background:var(--soft);padding:3px 8px;border-radius:10px}.detail{display:grid;grid-template-columns:92px 1fr;gap:12px;padding:11px 0;border-top:1px solid #ece9e4}.detail>span{font-size:10px;color:var(--muted);font-weight:700}.detail p{margin:0;font-size:13px;white-space:pre-wrap;overflow-wrap:anywhere}.primary-detail p{font-size:14px;color:#302e34}.systems{display:grid;gap:7px}.systems>div{display:flex;flex-direction:column}.systems b{font-size:12px}.systems a,.systems small{font-size:10px;color:var(--accent);overflow-wrap:anywhere;text-decoration:none}.relations{display:flex;flex-wrap:wrap;gap:8px;margin-top:13px}.relations span{font-size:10px;color:#625f68;background:var(--soft);padding:5px 8px}.relations b{color:var(--accent);margin-right:6px}.empty-export{color:var(--muted)}footer{padding:18px 70px;border-top:1px solid var(--line);color:#928e94;font-size:9px;display:flex;justify-content:space-between}@page{size:A4;margin:13mm}@media(max-width:680px){.cover,.content{padding-left:24px;padding-right:24px}.cover h1{font-size:29px}.paper{width:100%;margin:0;box-shadow:none}.detail{grid-template-columns:1fr;gap:3px}footer{padding-left:24px;padding-right:24px}}@media print{body{background:#fff}.print-bar{display:none}.paper{width:auto;margin:0;box-shadow:none}.cover{padding-top:18px}.step{box-shadow:none}a{color:inherit!important;text-decoration:none!important}*{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+  </style></head><body><div class="print-bar"><span>离线流程手册 · 可直接打印或另存为 PDF</span><button onclick="window.print()">打印 / 保存 PDF</button></div><main class="paper"><section class="cover"><div class="brand">顺办 · 流程手册</div><h1>${escapeHtml(template.name)}</h1><p>${escapeHtml(template.description || '暂无流程说明')}</p><div class="meta"><span>流程编号<b>${escapeHtml(template.flow_code)}</b></span><span>版本<b>V${escapeHtml(template.current_version)}</b></span><span>分类<b>${escapeHtml(template.category || '未分类')}</b></span><span>步骤数<b>${nodes.length}</b></span></div></section><div class="content"><div class="section-title">流程总览</div><div class="overview">${overview}</div><div class="section-title">步骤详情</div>${details || '<p class="empty-export">暂无步骤详情。</p>'}</div><footer><span>由顺办导出 · 文件可离线使用</span><span>导出时间：${escapeHtml(exportedAt)}</span></footer></main></body></html>`
+}
 
 function StepNode({ data, selected }) {
   const systems = getSystems(data)
@@ -232,6 +271,7 @@ function LibraryView({ data, openTemplate, newTemplate, startTask, reload, notif
   const [cloneTarget, setCloneTarget] = useState(null)
   const [cloneName, setCloneName] = useState('')
   const [cloning, setCloning] = useState(false)
+  const [exportingId, setExportingId] = useState(null)
   const currentUser = data.currentUser
   const matchesFilter = template => {
     if (filter === 'mine') return template.owner_id === currentUser.id
@@ -243,6 +283,24 @@ function LibraryView({ data, openTemplate, newTemplate, startTask, reload, notif
   const filters = [['all','全部流程'],['mine','我创建的'],['shared','分享给我的'],['department','部门流程']]
   const visibility = { private: '仅自己', department: '指定部门', users: '指定用户', mixed: '部门和用户', public: '全体用户' }
   const prepareClone = template => { setCloneTarget(template); setCloneName(template.name) }
+  const exportTemplate = async template => {
+    if (exportingId) return
+    setExportingId(template.id)
+    try {
+      const detail = await api(`/api/templates/${template.id}`)
+      const blob = new Blob([createPrintableFlow(detail)], { type:'text/html;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `${template.name.replace(/[\\/:*?"<>|]/g, '_') || '流程'}-V${template.current_version}.html`
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+      notify('流程手册已导出，可离线打开或打印')
+    } catch (error) { notify(error.message) }
+    finally { setExportingId(null) }
+  }
   const cloneTemplate = async event => {
     event.preventDefault()
     if (!cloneName.trim()) return notify('请填写新流程名称')
@@ -265,7 +323,7 @@ function LibraryView({ data, openTemplate, newTemplate, startTask, reload, notif
       {templates.map((template, index) => <article className="template-item" key={template.id} style={{ '--delay': `${index * 50}ms` }}>
         <div className="template-icon"><Network size={23}/></div>
         <div className="template-copy"><div className="template-meta"><span>{template.category}</span><span>V{template.current_version}</span><span><Share2 size={13}/>{visibility[template.visibility]}</span></div><h3>{template.name}</h3><p>{template.description || '暂无说明'}</p><small>{template.flow_code} · {template.owner_name} 创建</small></div>
-        <div className="template-actions"><button className="ghost" onClick={() => prepareClone(template)}><Copy size={16}/>克隆</button>{template.owner_id === currentUser.id && <button className="ghost" onClick={() => openTemplate(template.id)}><Pencil size={16}/>编辑</button>}<button className="secondary" onClick={() => startTask(template.id)}>调用流程</button></div>
+        <div className="template-actions"><button className="ghost" onClick={() => exportTemplate(template)} disabled={exportingId === template.id}><Download size={16}/>{exportingId === template.id ? '导出中' : '导出'}</button><button className="ghost" onClick={() => prepareClone(template)}><Copy size={16}/>克隆</button>{template.owner_id === currentUser.id && <button className="ghost" onClick={() => openTemplate(template.id)}><Pencil size={16}/>编辑</button>}<button className="secondary" onClick={() => startTask(template.id)}>调用流程</button></div>
       </article>)}
       {!templates.length && <Empty icon={query ? Search : Network} title={query ? '没有找到流程' : '当前分类还没有流程'} text={query ? '换个关键词试试。' : '可以新建流程，或切换到其他分类。'} />}
     </div>
